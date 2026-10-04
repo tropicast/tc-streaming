@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# End-to-end check of the Caddy TLS gateway (#6) with Caddy's local CA.
+# Needs Docker with Compose, ffmpeg with libmp3lame, and curl.
+# Publishes with curl: FFmpeg's icecast:// output ignores -ca_file, so it
+# only trusts publicly issued certificates.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+https_port=${TEST_HTTPS_PORT:-18443}
+http_port=${TEST_HTTP_PORT:-18080}
+project=tcs-gateway-test
+work=$(mktemp -d)
+env_file=$work/env
+ca=$work/root.crt
+trap '[[ -n ${KEEP:-} ]] || docker compose -p "$project" --env-file "$env_file" down -v >/dev/null 2>&1; rm -rf "$work"' EXIT
+
+secret=$(openssl rand -hex 16)
+cat >"$env_file" <<ENV
+ICECAST_SOURCE_PASSWORD=$(openssl rand -hex 24)
+ICECAST_ADMIN_PASSWORD=$(openssl rand -hex 24)
+ICECAST_SOURCE_AUTH_USER=icecast
+ICECAST_SOURCE_AUTH_PASSWORD=$(openssl rand -hex 24)
+ICECAST_PORT=${TEST_ICECAST_PORT:-18000}
+STUB_STATIONS=42:$secret
+LISTEN_HOST=listen.localhost
+INGEST_HOST=ingest.localhost
+ACME_EMAIL=dev@example.com
+CADDY_GLOBAL_OPTIONS=local_certs
+CADDY_HTTP_PORT=$http_port
+CADDY_HTTPS_PORT=$https_port
+ENV
+
+compose() { docker compose -p "$project" --env-file "$env_file" "$@"; }
+compose up -d --build --wait >/dev/null
+
+for _ in $(seq 1 30); do
+    compose cp caddy:/data/caddy/pki/authorities/local/root.crt "$ca" >/dev/null 2>&1 && break
+    sleep 1
+done
+
+# *.localhost may resolve to ::1 while Docker publishes on 127.0.0.1.
+pin=(--resolve "listen.localhost:$https_port:127.0.0.1" --resolve "ingest.localhost:$https_port:127.0.0.1"
+     --resolve "listen.localhost:$http_port:127.0.0.1")
+listen=https://listen.localhost:$https_port
+ingest=https://ingest.localhost:$https_port
+
+failures=0
+check() {
+    local name=$1 expected=$2 actual=$3
+    if [[ $expected == "$actual" ]]; then
+        echo "ok   - $name"
+    else
+        echo "FAIL - $name (expected $expected, got $actual)"
+        failures=$((failures + 1))
+    fi
+}
+status() { curl -s -o /dev/null -w '%{http_code}' --cacert "$ca" "${pin[@]}" "$@" || true; }
+
+# Stream a tone to the ingest host for $2 seconds with credentials $1.
+publish() {
+    timeout "$2" ffmpeg -nostdin -loglevel error -re -f lavfi -i sine \
+        -c:a libmp3lame -b:a 64k -f mp3 - 2>/dev/null |
+        curl -s -o /dev/null -w '%{http_code}' --cacert "$ca" "${pin[@]}" \
+            -u "$1" -T - -H 'Content-Type: audio/mpeg' -H 'Expect:' \
+            "$ingest/stations/42/live.mp3" || true
+}
+
+check "admin pages are hidden" 404 "$(status "$listen/admin/stats.xml")"
+check "status pages are hidden" 404 "$(status "$listen/status-json.xsl")"
+check "listen host refuses PUT" 404 "$(status -X PUT "$listen/stations/42/live.mp3")"
+check "ingest host refuses GET" 404 "$(status "$ingest/stations/42/live.mp3")"
+check "HTTP redirects to HTTPS" 308 "$(status "http://listen.localhost:$http_port/stations/42/live.mp3")"
+check "CORS preflight succeeds" 204 "$(status -X OPTIONS "$listen/stations/42/live.mp3")"
+check "wrong credential is rejected" 401 "$(publish 42:wrong 3)"
+
+publish "42:$secret" 15 >/dev/null &
+sleep 4
+read -r code type bytes < <(curl -s -o /dev/null -m 5 --cacert "$ca" "${pin[@]}" \
+    -w '%{http_code} %{content_type} %{size_download}\n' "$listen/stations/42/live.mp3" || true)
+check "listener gets the stream over HTTPS" "200 audio/mpeg" "$code $type"
+check "audio keeps flowing (>= 30 KB in 5 s)" yes "$([[ ${bytes:-0} -ge 30000 ]] && echo yes || echo no)"
+headers=$(curl -s -D - -o /dev/null -m 2 --cacert "$ca" "${pin[@]}" "$listen/stations/42/live.mp3" || true)
+check "CORS header is set" yes "$(grep -qi '^access-control-allow-origin: \*' <<<"$headers" && echo yes || echo no)"
+check "HSTS header is set" yes "$(grep -qi '^strict-transport-security:' <<<"$headers" && echo yes || echo no)"
+wait
+
+basic=$(printf '42:%s' "$secret" | base64)
+if compose logs caddy | grep -qF -e "$secret" -e "$basic"; then
+    check "gateway logs contain no credentials" clean leaked
+else
+    check "gateway logs contain no credentials" clean clean
+fi
+
+exit "$failures"

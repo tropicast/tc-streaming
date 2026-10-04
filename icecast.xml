@@ -37,6 +37,25 @@
         <admin-password />
     </authentication>
 
+    <!-- Station-scoped source authentication (#7). Every mount without its
+         own <mount type="normal"> uses this default, so each publish is
+         checked by the control plane. docker-entrypoint.py fills in the
+         endpoint URL and the credentials Icecast uses to call it.
+         Icecast denies the source when the endpoint refuses, errors or
+         does not answer within its built-in 15 s timeout.
+         The global source password is not accepted on these mounts. -->
+    <mount type="default">
+        <authentication>
+            <role type="url" match-method="source,put" allow-method="source,put" allow-web="*" allow-admin="metadata">
+                <option name="client_add" value="" />
+                <option name="action_add" value="stream_auth" />
+                <option name="username" value="" />
+                <option name="password" value="" />
+            </role>
+            <role type="anonymous" match-method="source,put" deny-all="*" />
+        </authentication>
+    </mount>
+
     <!-- Icecast listens on all interfaces inside the container only.
          The container port is never published to the internet: Caddy is
          the only public entry point (#6) and the host firewall keeps

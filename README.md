@@ -24,16 +24,8 @@ Compose publishes Icecast on localhost only. Set `ICECAST_PORT` in `.env` to
 use another host port. `ICECAST_RELAY_PASSWORD` is optional; a random one is
 generated at startup when it is unset.
 
-Publish a test tone with FFmpeg:
-
-```sh
-. ./.env
-ffmpeg -re -f lavfi -i 'sine=frequency=440' -c:a libmp3lame -b:a 128k \
-  -content_type audio/mpeg -f mp3 \
-  "icecast://source:${ICECAST_SOURCE_PASSWORD}@127.0.0.1:${ICECAST_PORT:-8000}/test.mp3"
-```
-
-Listen at `http://127.0.0.1:8000/test.mp3`. Keep `.env` private.
+Keep `.env` private. See *Source authentication* below to publish a test
+tone.
 
 ### Production configuration
 
@@ -57,6 +49,63 @@ Listen at `http://127.0.0.1:8000/test.mp3`. Keep `.env` private.
   is set.
 - Compose raises the container's open-file limit to 65536, because each
   listener holds one file descriptor.
+
+### Source authentication
+
+Broadcasters never use a shared password (issue #7). Each publish to
+`/stations/{station-id}/...` is checked by the control-plane endpoint in
+`ICECAST_SOURCE_AUTH_URL`, called with the node credentials in
+`ICECAST_SOURCE_AUTH_USER` and `ICECAST_SOURCE_AUTH_PASSWORD`. Icecast
+denies the source when the endpoint refuses, fails or does not answer
+within 15 seconds. `docs/source-auth.md` describes the contract the API
+must implement.
+
+For local runs, Compose starts `auth-stub`, which allows the
+`station-id:password` pairs in `STUB_STATIONS`:
+
+```sh
+. ./.env
+ffmpeg -re -f lavfi -i 'sine=frequency=440' -c:a libmp3lame -b:a 128k \
+  -content_type audio/mpeg -f mp3 \
+  "icecast://42:change-me@127.0.0.1:${ICECAST_PORT:-8000}/stations/42/live.mp3"
+```
+
+`tests/source-auth.sh` checks the auth rules end to end and runs in CI.
+
+### TLS gateway
+
+Caddy (`caddy/Caddyfile`) is the only public entry point (issue #6). It
+runs in the same Compose project and reaches Icecast over the internal
+Docker network.
+
+| Host | Allows | Everything else |
+|---|---|---|
+| `LISTEN_HOST` | `GET`/`HEAD`/`OPTIONS` on `/stations/{id}/live.(mp3\|opus)` | 404 |
+| `INGEST_HOST` | `PUT`/`SOURCE` on `/stations/{id}/live.(mp3\|opus)` | 404 |
+
+- Streams are proxied with `flush_interval -1`, so audio is never
+  buffered. Caddy sets no timeout on long-lived streams.
+- Admin and status pages are never reachable from outside.
+- Listener responses carry `Access-Control-Allow-Origin: *` for the web
+  player, and every response carries HSTS.
+- The access log drops query strings, `Authorization` and `Cookie` headers.
+- Certificates come from Let's Encrypt. Set real hostnames, `ACME_EMAIL`,
+  `CADDY_BIND=0.0.0.0` and leave `CADDY_GLOBAL_OPTIONS` empty in
+  production. Locally, `.env.example` uses `*.localhost` with
+  `local_certs`.
+
+FFmpeg's `icecast://` output does not pass `-ca_file` to its TLS layer, so
+it only trusts publicly issued certificates. Against a local gateway,
+publish with curl instead:
+
+```sh
+ffmpeg -re -f lavfi -i sine -c:a libmp3lame -b:a 64k -f mp3 - |
+  curl -k -u 42:change-me -T - -H 'Content-Type: audio/mpeg' -H 'Expect:' \
+    https://ingest.localhost/stations/42/live.mp3
+```
+
+`tests/gateway.sh` checks routing, TLS, headers and log redaction end to
+end and runs in CI.
 
 ### CI
 
