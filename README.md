@@ -24,16 +24,8 @@ Compose publishes Icecast on localhost only. Set `ICECAST_PORT` in `.env` to
 use another host port. `ICECAST_RELAY_PASSWORD` is optional; a random one is
 generated at startup when it is unset.
 
-Publish a test tone with FFmpeg:
-
-```sh
-. ./.env
-ffmpeg -re -f lavfi -i 'sine=frequency=440' -c:a libmp3lame -b:a 128k \
-  -content_type audio/mpeg -f mp3 \
-  "icecast://source:${ICECAST_SOURCE_PASSWORD}@127.0.0.1:${ICECAST_PORT:-8000}/test.mp3"
-```
-
-Listen at `http://127.0.0.1:8000/test.mp3`. Keep `.env` private.
+Keep `.env` private. See *Source authentication* below to publish a test
+tone.
 
 ### Production configuration
 
@@ -57,6 +49,28 @@ Listen at `http://127.0.0.1:8000/test.mp3`. Keep `.env` private.
   is set.
 - Compose raises the container's open-file limit to 65536, because each
   listener holds one file descriptor.
+
+### Source authentication
+
+Broadcasters never use a shared password (issue #7). Each publish to
+`/stations/{station-id}/...` is checked by the control-plane endpoint in
+`ICECAST_SOURCE_AUTH_URL`, called with the node credentials in
+`ICECAST_SOURCE_AUTH_USER` and `ICECAST_SOURCE_AUTH_PASSWORD`. Icecast
+denies the source when the endpoint refuses, fails or does not answer
+within 15 seconds. `docs/source-auth.md` describes the contract the API
+must implement.
+
+For local runs, Compose starts `auth-stub`, which allows the
+`station-id:password` pairs in `STUB_STATIONS`:
+
+```sh
+. ./.env
+ffmpeg -re -f lavfi -i 'sine=frequency=440' -c:a libmp3lame -b:a 128k \
+  -content_type audio/mpeg -f mp3 \
+  "icecast://42:change-me@127.0.0.1:${ICECAST_PORT:-8000}/stations/42/live.mp3"
+```
+
+`tests/source-auth.sh` checks the auth rules end to end and runs in CI.
 
 ### CI
 
