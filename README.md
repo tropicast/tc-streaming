@@ -42,3 +42,36 @@ scans it with Trivy, failing on fixable critical vulnerabilities.
 Pull requests only build and test. Pushes to `main` and `v*` tags also push
 to `ghcr.io/tropicast/icecast`, tagged with the full git SHA and, for tags,
 the semver version. No `latest` tag is published: deploy a pinned tag.
+
+## MVP node (Terraform)
+
+`infra/terraform` provisions the MVP streaming node on Hetzner Cloud
+(issue #3):
+
+- 1× **CX33** (4 vCPU, 8 GB RAM, 20 TB egress included) in `fsn1`.
+- IPv4 and IPv6 primary IPs that outlive the server, so a rebuilt node keeps
+  its addresses and DNS.
+- A firewall that opens 80/443 (TCP, plus UDP 443 for HTTP/3) to everyone and
+  22 only to `admin_cidrs`. Icecast's port 8000 is never public.
+- Key-only SSH. Delete and rebuild protection on the server and IPs.
+- Optional `A`/`AAAA` records for `listen.<zone>` and `ingest.<zone>` in an
+  existing Hetzner DNS zone.
+
+Cost: about $10-14/month for the CX33 plus a small charge for the primary
+IPv4; egress above 20 TB is billed at about $1.12/TB. Check current Hetzner
+prices before applying.
+
+```sh
+cd infra/terraform
+cp backend.hcl.example backend.hcl            # remote state bucket
+cp terraform.tfvars.example terraform.tfvars  # keys, admin CIDRs, DNS zone
+export HCLOUD_TOKEN=...                       # Hetzner Cloud API token
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...  # state bucket keys
+terraform init -backend-config=backend.hcl
+terraform plan
+terraform apply
+```
+
+`backend.hcl`, `terraform.tfvars` and state files are git-ignored. Delete
+protection must be turned off in `main.tf` before `terraform destroy` can
+remove the server or IPs.

@@ -1,0 +1,8 @@
+#cloud-config
+# Minimal bootstrap: key-only SSH. Full hardening and the runtime are #4.
+ssh_pwauth: false
+disable_root: false
+package_update: true
+runcmd:
+  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  - systemctl reload ssh

@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (git-ignored) and edit.
+name        = "tc-stream-1"
+location    = "fsn1"
+server_type = "cx33"
+
+ssh_public_keys = {
+  admin = "ssh-ed25519 AAAA... admin@example"
+}
+
+admin_cidrs = ["203.0.113.10/32"]
+
+# Existing Hetzner DNS zone; leave null to manage DNS elsewhere.
+dns_zone = null
