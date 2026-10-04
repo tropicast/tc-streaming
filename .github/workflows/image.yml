@@ -1,0 +1,89 @@
+name: Icecast image
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - docker-entrypoint.py
+      - icecast.xml
+      - .dockerignore
+      - .github/workflows/image.yml
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/icecast
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: tropicast-icecast:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run -d --name icecast \
+            -e ICECAST_SOURCE_PASSWORD="$(openssl rand -hex 24)" \
+            -e ICECAST_ADMIN_PASSWORD="$(openssl rand -hex 24)" \
+            -p 127.0.0.1:8000:8000 tropicast-icecast:ci
+          for _ in $(seq 1 30); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' icecast)" = healthy ]; then
+              curl --fail --silent --output /dev/null http://127.0.0.1:8000/status-json.xsl
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs icecast
+          exit 1
+
+      - name: Scan for critical vulnerabilities
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.67.2 image \
+            --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            tropicast-icecast:ci
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - if: github.event_name != 'pull_request'
+        name: Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

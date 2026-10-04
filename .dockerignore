@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!icecast.xml
+!docker-entrypoint.py

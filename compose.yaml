@@ -1,0 +1,11 @@
+services:
+  icecast:
+    build: .
+    image: tropicast-icecast:local
+    env_file:
+      - .env
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?Set ICECAST_SOURCE_PASSWORD in .env}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?Set ICECAST_ADMIN_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${ICECAST_PORT:-8000}:8000"
