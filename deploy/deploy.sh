@@ -84,7 +84,9 @@ start() {
 caddy_started_at() {
     local id
     id=$(compose ps -q caddy 2>/dev/null || true)
-    [[ -n $id ]] && docker inspect -f '{{.State.StartedAt}}' "$id" 2>/dev/null || true
+    if [[ -n $id ]]; then
+        docker inspect -f '{{.State.StartedAt}}' "$id" 2>/dev/null || true
+    fi
 }
 
 record() {
