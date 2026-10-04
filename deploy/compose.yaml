@@ -1,0 +1,63 @@
+# Production stack for one streaming node (#11). Deployed to
+# /opt/tc-streaming by deploy.sh; secrets come from /opt/tc-streaming/.env.
+# Icecast has no published port: Caddy is the only public entry point.
+name: tc-streaming
+
+services:
+  icecast:
+    image: ghcr.io/tropicast/icecast:${ICECAST_IMAGE_TAG:?ICECAST_IMAGE_TAG is set by deploy.sh}
+    restart: unless-stopped
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?}
+      ICECAST_RELAY_PASSWORD: ${ICECAST_RELAY_PASSWORD:?}
+      ICECAST_HOSTNAME: ${LISTEN_HOST:?}
+      ICECAST_SOURCE_AUTH_URL: ${ICECAST_SOURCE_AUTH_URL:?}
+      ICECAST_SOURCE_AUTH_USER: ${ICECAST_SOURCE_AUTH_USER:?}
+      ICECAST_SOURCE_AUTH_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD:?}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  caddy:
+    image: caddy:2.11.6
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?}
+      LISTEN_HOST: ${LISTEN_HOST:?}
+      INGEST_HOST: ${INGEST_HOST:?}
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+    ports:
+      - "${CADDY_BIND:-0.0.0.0}:${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_BIND:-0.0.0.0}:${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_BIND:-0.0.0.0}:${CADDY_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      # A directory mount, so deploy.sh can replace the Caddyfile and run
+      # `caddy reload` without recreating the container (and dropping
+      # every listener).
+      - ./caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # Temporary stand-in for the control-plane auth endpoint, until the API
+  # exists. Enabled only with COMPOSE_PROFILES=stub. Never leave it on with
+  # real customers.
+  auth-stub:
+    profiles: ["stub"]
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: ["python3", "-u", "/srv/server.py"]
+    volumes:
+      - ./auth-stub/server.py:/srv/server.py:ro
+    environment:
+      STUB_ICECAST_USER: ${ICECAST_SOURCE_AUTH_USER:?}
+      STUB_ICECAST_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD:?}
+      STUB_STATIONS: ${STUB_STATIONS:-}
+
+volumes:
+  caddy-data:
+  caddy-config:

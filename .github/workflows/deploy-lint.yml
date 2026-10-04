@@ -1,0 +1,32 @@
+name: Deploy lint
+
+on:
+  pull_request:
+    paths:
+      - deploy/**
+      - tests/*.sh
+      - .github/workflows/deploy-lint.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/**
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck deploy/deploy.sh tests/*.sh
+      - name: Validate the production Compose file
+        run: |
+          env_file=$(mktemp)
+          for name in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD ICECAST_RELAY_PASSWORD \
+                      ICECAST_SOURCE_AUTH_URL ICECAST_SOURCE_AUTH_USER ICECAST_SOURCE_AUTH_PASSWORD \
+                      LISTEN_HOST INGEST_HOST ACME_EMAIL; do
+            echo "$name=placeholder" >> "$env_file"
+          done
+          ICECAST_IMAGE_TAG=sha-test docker compose -f deploy/compose.yaml --env-file "$env_file" --profile stub config --quiet
