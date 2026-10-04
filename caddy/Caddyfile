@@ -1,0 +1,71 @@
+# TLS gateway for the streaming node (#6). Caddy is the only public entry
+# point; Icecast stays on the internal Docker network.
+{
+	email {$ACME_EMAIL}
+	{$CADDY_GLOBAL_OPTIONS}
+}
+
+(common) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	# Access log without query strings or credentials.
+	log {
+		output stdout
+		format filter {
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+			request>uri regexp \?.* ""
+		}
+	}
+}
+
+# Listeners: GET a station stream; everything else is hidden.
+{$LISTEN_HOST} {
+	import common
+
+	@stream {
+		method GET HEAD OPTIONS
+		path_regexp ^/stations/[A-Za-z0-9-]{1,64}/live\.(mp3|opus)$
+	}
+
+	handle @stream {
+		header {
+			Access-Control-Allow-Origin *
+			Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+			Access-Control-Expose-Headers "icy-br, icy-name, icy-description, icy-genre, icy-metaint"
+		}
+		@preflight method OPTIONS
+		respond @preflight 204
+
+		reverse_proxy icecast:8000 {
+			# Send audio as it arrives; never buffer the response.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# Broadcasters: the desktop app publishes with HTTP PUT.
+{$INGEST_HOST} {
+	import common
+
+	@source {
+		method PUT SOURCE
+		path_regexp ^/stations/[A-Za-z0-9-]{1,64}/live\.(mp3|opus)$
+	}
+
+	handle @source {
+		reverse_proxy icecast:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}

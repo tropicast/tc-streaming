@@ -17,7 +17,7 @@ must reject requests without these node credentials.
 | `mount` | `/stations/42/live.mp3` | Requested mount |
 | `user` | `42` | Username sent by the desktop app |
 | `pass` | `…` | Station broadcast credential |
-| `ip` | `203.0.113.7` | Broadcaster IP as seen by Icecast |
+| `ip` | `172.18.0.3` | Address that connected to Icecast. Behind the Caddy gateway this is Caddy's container address, not the broadcaster's |
 | `agent` | `Lavf/63.1.101` | Broadcaster user agent |
 | `client` | `17` | Icecast connection ID |
 | `server`, `port` | `listen.example.com`, `8000` | Node hostname and port |

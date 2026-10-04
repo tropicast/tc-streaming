@@ -19,6 +19,27 @@ services:
     ports:
       - "127.0.0.1:${ICECAST_PORT:-8000}:8000"
 
+  caddy:
+    image: caddy:2.11.6
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+      LISTEN_HOST: ${LISTEN_HOST:?Set LISTEN_HOST in .env}
+      INGEST_HOST: ${INGEST_HOST:?Set INGEST_HOST in .env}
+      # "local_certs" for local runs; empty in production (Let's Encrypt).
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+    ports:
+      - "${CADDY_BIND:-127.0.0.1}:${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_BIND:-127.0.0.1}:${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_BIND:-127.0.0.1}:${CADDY_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
   # Development and CI only: stands in for the control-plane auth endpoint.
   auth-stub:
     image: python:3.12-slim
@@ -29,3 +50,7 @@ services:
       STUB_ICECAST_USER: ${ICECAST_SOURCE_AUTH_USER}
       STUB_ICECAST_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD}
       STUB_STATIONS: ${STUB_STATIONS:-}
+
+volumes:
+  caddy-data:
+  caddy-config:
