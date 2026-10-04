@@ -24,6 +24,8 @@
           - fail2ban
           - gnupg
           - python3-debian
+          # fail2ban needs it for backend = systemd (Debian 12 has no auth.log).
+          - python3-systemd
           - sudo
           - systemd-timesyncd
           - unattended-upgrades
