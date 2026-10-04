@@ -6,8 +6,13 @@ output "ipv4" {
   value = hcloud_primary_ip.ipv4.ip_address
 }
 
+# The server's IPv6 address (::1 of its /64), for AAAA records.
 output "ipv6" {
-  value = hcloud_primary_ip.ipv6.ip_address
+  value = hcloud_server.streaming.ipv6_address
+}
+
+output "ipv6_network" {
+  value = hcloud_server.streaming.ipv6_network
 }
 
 output "hostnames" {
