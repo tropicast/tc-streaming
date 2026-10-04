@@ -1,0 +1,299 @@
+# Harden an MVP streaming node and install the container runtime (#4).
+# Run: ansible-playbook site.yml
+- name: Streaming node baseline
+  hosts: streaming
+  # Root needs no sudo; the first run on a fresh node may lack it.
+  become: "{{ (ansible_user | default('root')) != 'root' }}"
+  vars:
+    app_dir: /opt/tc-streaming
+    nofile_limit: 1048576
+  pre_tasks:
+    - name: Require admin and deploy keys
+      ansible.builtin.assert:
+        that:
+          - ops_ssh_keys | default([]) | length > 0
+          - deploy_ssh_keys | default([]) | length > 0
+        fail_msg: Set ops_ssh_keys and deploy_ssh_keys in group_vars/streaming.yml.
+
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - fail2ban
+          - gnupg
+          - python3-debian
+          - sudo
+          - systemd-timesyncd
+          - unattended-upgrades
+        update_cache: true
+        cache_valid_time: 3600
+
+    # --- Time ---
+    - name: Check the time zone
+      ansible.builtin.command: timedatectl show --property=Timezone --value
+      register: timezone
+      changed_when: false
+
+    - name: Set the time zone to UTC
+      ansible.builtin.command: timedatectl set-timezone UTC
+      when: timezone.stdout != "UTC"
+      changed_when: true
+
+    - name: Enable NTP time sync
+      ansible.builtin.systemd_service:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+
+    # --- Security updates ---
+    - name: Enable unattended security upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    # A reboot drops every listener, so never reboot automatically.
+    # Reboot by hand in the maintenance window (see README).
+    - name: Never reboot automatically after upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/52tropicast-unattended
+        mode: "0644"
+        content: |
+          Unattended-Upgrade::Automatic-Reboot "false";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+    # --- Users ---
+    - name: Create the ops (admin) user
+      ansible.builtin.user:
+        name: ops
+        shell: /bin/bash
+        groups: sudo
+        append: true
+
+    - name: Allow ops to sudo without a password (key-only login)
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-ops
+        mode: "0440"
+        content: "ops ALL=(ALL) NOPASSWD:ALL\n"
+        validate: visudo -cf %s
+
+    - name: Create the deploy user
+      ansible.builtin.user:
+        name: deploy
+        shell: /bin/bash
+
+    - name: Create .ssh directories
+      ansible.builtin.file:
+        path: "/home/{{ item }}/.ssh"
+        state: directory
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0700"
+      loop: [ops, deploy]
+
+    - name: Install SSH keys
+      ansible.builtin.copy:
+        dest: "/home/{{ item.user }}/.ssh/authorized_keys"
+        content: "{{ item.ssh_keys | join('\n') }}\n"
+        owner: "{{ item.user }}"
+        group: "{{ item.user }}"
+        mode: "0600"
+      loop:
+        - { user: ops, ssh_keys: "{{ ops_ssh_keys }}" }
+        - { user: deploy, ssh_keys: "{{ deploy_ssh_keys }}" }
+      loop_control:
+        label: "{{ item.user }}"
+
+    # --- SSH ---
+    # sshd -t needs this directory; it exists once sshd has run.
+    - name: Ensure the sshd runtime directory exists
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        mode: "0755"
+
+    - name: Harden sshd
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-tropicast.conf
+        mode: "0644"
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PubkeyAuthentication yes
+          AllowUsers ops deploy
+          MaxAuthTries 3
+          X11Forwarding no
+        validate: sshd -t -f %s
+      notify: Reload sshd
+
+    - name: Ban repeated SSH failures
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/sshd.local
+        mode: "0644"
+        content: |
+          [sshd]
+          enabled = true
+          backend = systemd
+          maxretry = 5
+          bantime = 1h
+      notify: Restart fail2ban
+
+    - name: Start fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    # --- Kernel and limits for many long-lived connections ---
+    # BBR copes better with long, lossy paths (satellite, 4G). Containers
+    # cannot load kernel modules, so the playbook's CI test skips it.
+    - name: Load the BBR congestion control module now and at boot
+      when: ansible_facts['virtualization_type'] not in ['docker', 'container', 'podman']
+      block:
+        - name: Load tcp_bbr at boot
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/tcp_bbr.conf
+            mode: "0644"
+            content: "tcp_bbr\n"
+
+        - name: Load tcp_bbr now
+          ansible.builtin.command: modprobe tcp_bbr
+          changed_when: false
+
+        - name: Use BBR with fair queueing
+          ansible.builtin.copy:
+            dest: /etc/sysctl.d/61-tropicast-bbr.conf
+            mode: "0644"
+            content: |
+              net.core.default_qdisc = fq
+              net.ipv4.tcp_congestion_control = bbr
+          notify: Apply sysctl
+
+    - name: Tune the kernel for streaming
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/60-tropicast.conf
+        mode: "0644"
+        content: |
+          net.core.somaxconn = 4096
+          net.ipv4.tcp_max_syn_backlog = 8192
+          net.core.netdev_max_backlog = 16384
+          net.ipv4.ip_local_port_range = 10240 65535
+          # Find dead listener connections within about 10 minutes.
+          net.ipv4.tcp_keepalive_time = 300
+          net.ipv4.tcp_keepalive_intvl = 30
+          net.ipv4.tcp_keepalive_probes = 5
+      notify: Apply sysctl
+
+    - name: Create the systemd drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: Raise the open-file limit for services
+      ansible.builtin.copy:
+        dest: /etc/systemd/system.conf.d/60-tropicast.conf
+        mode: "0644"
+        content: |
+          [Manager]
+          DefaultLimitNOFILE={{ nofile_limit }}
+      notify: Reload systemd
+
+    # --- Docker ---
+    - name: Add the Docker apt repository
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: deb
+        uris: https://download.docker.com/linux/debian
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: stable
+        architectures: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+        signed_by: https://download.docker.com/linux/debian/gpg
+
+    - name: Install Docker Engine and the Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        update_cache: true
+
+    # live-restore keeps containers (and listeners) running while the
+    # Docker daemon restarts or upgrades.
+    - name: Create the Docker config directory
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        mode: "0755"
+
+    - name: Configure the Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ docker_daemon | to_nice_json }}\n"
+      vars:
+        docker_daemon:
+          live-restore: true
+          log-driver: local
+          log-opts:
+            max-size: 20m
+            max-file: "5"
+          default-ulimits:
+            nofile:
+              Name: nofile
+              Soft: 65536
+              Hard: 65536
+      notify: Restart docker
+
+    - name: Start Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        enabled: true
+        state: started
+
+    # Membership of the docker group is root-equivalent; only the deploy
+    # pipeline key logs in as this user.
+    - name: Let the deploy user run containers
+      ansible.builtin.user:
+        name: deploy
+        groups: docker
+        append: true
+
+    - name: Create the application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0750"
+
+  handlers:
+    - name: Reload sshd
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: reloaded
+
+    - name: Restart fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        state: restarted
+
+    - name: Apply sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: true
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reexec: true
+
+    - name: Restart docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: restarted

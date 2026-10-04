@@ -1,0 +1,9 @@
+# Copy to group_vars/streaming.yml (git-ignored) and edit.
+
+# Humans who administer the node; they get sudo.
+ops_ssh_keys:
+  - "ssh-ed25519 AAAA... admin@example"
+
+# Key the deploy pipeline (#11) uses. No sudo; member of the docker group.
+deploy_ssh_keys:
+  - "ssh-ed25519 AAAA... github-actions-deploy"
