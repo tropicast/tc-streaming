@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Activate a release on the streaming node (#11). Runs as the deploy user.
 #
-#   deploy.sh activate <bundle-dir> <git-sha> <image-tag>
+#   deploy.sh activate <bundle-dir> <git-sha>
 #   deploy.sh rollback
 #   deploy.sh status
 #
@@ -10,8 +10,10 @@
 #   compose.yaml         active Compose file
 #   caddy/Caddyfile      active Caddy config (directory-mounted)
 #   auth-stub/server.py  temporary auth stub (profile "stub")
-#   releases/<sha>/      copy of each deployed bundle, for rollback
-#   CURRENT, PREVIOUS    "<git-sha> <image-tag>" of the active and prior release
+#   releases/<sha>/      copy of each deployed bundle, for rollback; its
+#                        release.env holds ICECAST_IMAGE_TAG and CADDY_IMAGE_TAG
+#   CURRENT, PREVIOUS    "<git-sha> <icecast-image-tag>" of the active and
+#                        prior release
 #
 # Registry login for the pull is done by the caller.
 set -euo pipefail
@@ -39,9 +41,24 @@ install_bundle() {
     mv deploy.sh.new deploy.sh
 }
 
+# Export the image tags of a release. Releases from before release.env
+# only pin the Icecast tag (their compose file uses the stock Caddy image).
+load_release() {
+    local sha=$1 fallback_tag=${2:-}
+    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG
+    if [[ -f releases/$sha/release.env ]]; then
+        ICECAST_IMAGE_TAG=$(sed -n 's/^ICECAST_IMAGE_TAG=//p' "releases/$sha/release.env")
+        CADDY_IMAGE_TAG=$(sed -n 's/^CADDY_IMAGE_TAG=//p' "releases/$sha/release.env")
+        export CADDY_IMAGE_TAG
+    else
+        ICECAST_IMAGE_TAG=$fallback_tag
+    fi
+    [[ -n $ICECAST_IMAGE_TAG ]] || { log "release $sha has no image tags"; exit 1; }
+    export ICECAST_IMAGE_TAG
+}
+
 start() {
-    local image_tag=$1
-    export ICECAST_IMAGE_TAG=$image_tag
+    local image_tag=$ICECAST_IMAGE_TAG
     [[ -f .env ]] || { log "missing $root/.env"; exit 1; }
     compose config --quiet
 
@@ -54,6 +71,11 @@ start() {
     running=$(compose ps -q icecast 2>/dev/null || true)
     if [[ -n $running ]] && [[ $(docker inspect -f '{{.Config.Image}}' "$running") != *":$image_tag" ]]; then
         log "icecast image changes to $image_tag: live listeners will reconnect"
+    fi
+    running=$(compose ps -q caddy 2>/dev/null || true)
+    if [[ -n $running && -n ${CADDY_IMAGE_TAG:-} ]] &&
+        [[ $(docker inspect -f '{{.Config.Image}}' "$running") != *":$CADDY_IMAGE_TAG" ]]; then
+        log "caddy image changes to $CADDY_IMAGE_TAG: all connections drop briefly"
     fi
 
     local caddy_before="" caddy_after=""
@@ -109,30 +131,37 @@ record() {
 
 case ${1:-} in
 activate)
-    bundle=$2 sha=$3 image_tag=$4
+    bundle=$2 sha=$3
     [[ $sha =~ ^[0-9a-f]{40}$ ]] || { log "invalid git sha: $sha"; exit 1; }
+    [[ -f $bundle/release.env ]] || { log "bundle has no release.env"; exit 1; }
     install -d -m 0750 releases
     rm -rf "releases/$sha"
     cp -r "$bundle" "releases/$sha"
+    load_release "$sha"
     install_bundle "releases/$sha"
-    start "$image_tag"
-    record "$sha" "$image_tag"
-    log "active: $sha ($image_tag)"
+    start
+    record "$sha" "$ICECAST_IMAGE_TAG"
+    log "active: $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
     ;;
 rollback)
     [[ -f PREVIOUS ]] || { log "no previous release recorded"; exit 1; }
     read -r sha image_tag < PREVIOUS
     [[ -d releases/$sha ]] || { log "release $sha no longer on disk"; exit 1; }
-    log "rolling back to $sha ($image_tag)"
+    load_release "$sha" "$image_tag"
+    log "rolling back to $sha"
     install_bundle "releases/$sha"
-    SKIP_PULL=${SKIP_PULL:-1} start "$image_tag"
-    record "$sha" "$image_tag"
-    log "active: $sha ($image_tag)"
+    SKIP_PULL=${SKIP_PULL:-1} start
+    record "$sha" "$ICECAST_IMAGE_TAG"
+    log "active: $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
     ;;
 status)
     echo "current:  $(cat CURRENT 2>/dev/null || echo none)"
     echo "previous: $(cat PREVIOUS 2>/dev/null || echo none)"
-    ICECAST_IMAGE_TAG=$(cut -d' ' -f2 CURRENT 2>/dev/null || echo unknown) compose ps
+    if [[ -f CURRENT ]]; then
+        read -r sha image_tag < CURRENT
+        load_release "$sha" "$image_tag"
+    fi
+    compose ps
     ;;
 *)
     sed -n '2,8p' "$0"

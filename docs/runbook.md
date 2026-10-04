@@ -30,10 +30,12 @@ profile is on.
 | Caddyfile only | None. Caddy reloads its config in place. |
 | Icecast image (Dockerfile, `icecast.xml`, entrypoint) | Icecast restarts. All listeners and broadcasters disconnect; the desktop app reconnects by itself, players usually need a retry. |
 | Icecast secrets or settings in `.env` | Same as an image change. |
-| Caddy image version | Caddy restarts. All connections drop for a few seconds. |
+| Caddy image (`caddy/Dockerfile`: Caddy or caddy-l4 version) | Caddy restarts. All connections drop for a few seconds. |
 
-The deploy uses the Icecast image of the last `main` commit that changed
-the image files. A deploy that does not touch them keeps Icecast running.
+The deploy uses the Icecast and Caddy images of the last `main` commits
+that changed their files (`ghcr.io/tropicast/icecast`,
+`ghcr.io/tropicast/caddy`). A deploy that does not touch them keeps both
+running. The bundle's `release.env` records both tags.
 Deploy Icecast changes in a quiet hour.
 
 ## First-time setup

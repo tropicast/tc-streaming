@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end check of the Caddy TLS gateway (#6) with Caddy's local CA.
-# Needs Docker with Compose, ffmpeg with libmp3lame, and curl.
-# Publishes with curl: FFmpeg's icecast:// output ignores -ca_file, so it
-# only trusts publicly issued certificates.
+# Needs Docker with Compose, ffmpeg with libmp3lame, curl and python3.
+# Publishes with tests/raw_source.py (a classic Icecast source: PUT or SOURCE
+# with no length) and with curl (chunked). FFmpeg's icecast:// output would
+# be the real thing, but it ignores -ca_file so it cannot trust the local CA.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -56,22 +57,55 @@ check() {
 }
 status() { curl -s -o /dev/null -w '%{http_code}' --cacert "$ca" "${pin[@]}" "$@" || true; }
 
-# Stream a tone to the ingest host for $2 seconds with credentials $1.
+tone() {
+    timeout "$1" ffmpeg -nostdin -loglevel error -re -f lavfi -i sine \
+        -c:a libmp3lame -b:a 64k -f mp3 - 2>/dev/null
+}
+
+# Classic Icecast source: $1 credentials, $2 seconds, $3 method, $4 mount.
 publish() {
-    timeout "$2" ffmpeg -nostdin -loglevel error -re -f lavfi -i sine \
-        -c:a libmp3lame -b:a 64k -f mp3 - 2>/dev/null |
-        curl -s -o /dev/null -w '%{http_code}' --cacert "$ca" "${pin[@]}" \
-            -u "$1" -T - -H 'Content-Type: audio/mpeg' -H 'Expect:' \
-            "$ingest/stations/42/live.mp3" || true
+    tone "$2" | python3 tests/raw_source.py ingest.localhost "$https_port" \
+        "${4:-/stations/42/live.mp3}" "$1" --method "${3:-PUT}" --ca "$ca" \
+        --connect 127.0.0.1 || true
+}
+
+# Chunked HTTP upload, as curl or FFmpeg's https:// output send it.
+publish_chunked() {
+    tone "$2" | curl -s -o /dev/null -w '%{http_code}' --cacert "$ca" "${pin[@]}" \
+        -u "$1" -T - -H 'Content-Type: audio/mpeg' -H 'Expect:' \
+        "$ingest/stations/42/live.mp3" || true
+}
+
+# Bytes a listener receives in 5 seconds.
+listen_bytes() {
+    curl -s -o /dev/null -m 5 --cacert "$ca" "${pin[@]}" -w '%{size_download}' \
+        "$listen/stations/42/live.mp3" || true
 }
 
 check "admin pages are hidden" 404 "$(status "$listen/admin/stats.xml")"
 check "status pages are hidden" 404 "$(status "$listen/status-json.xsl")"
 check "listen host refuses PUT" 404 "$(status -X PUT "$listen/stations/42/live.mp3")"
-check "ingest host refuses GET" 404 "$(status "$ingest/stations/42/live.mp3")"
+check "ingest host closes GET" 000 "$(status "$ingest/stations/42/live.mp3")"
+check "ingest host closes admin requests" closed "$(publish "42:$secret" 2 PUT /admin/stats.xml)"
 check "HTTP redirects to HTTPS" 308 "$(status "http://listen.localhost:$http_port/stations/42/live.mp3")"
 check "CORS preflight succeeds" 204 "$(status -X OPTIONS "$listen/stations/42/live.mp3")"
 check "wrong credential is rejected" 401 "$(publish 42:wrong 3)"
+
+for method in PUT SOURCE; do
+    publish "42:$secret" 8 "$method" >/dev/null &
+    sleep 3
+    bytes=$(listen_bytes)
+    check "classic $method source reaches listeners (>= 30 KB in 5 s)" yes \
+        "$([[ ${bytes:-0} -ge 30000 ]] && echo yes || echo no)"
+    wait
+done
+
+publish_chunked "42:$secret" 8 >/dev/null &
+sleep 3
+bytes=$(listen_bytes)
+check "chunked upload reaches listeners (>= 30 KB in 5 s)" yes \
+    "$([[ ${bytes:-0} -ge 30000 ]] && echo yes || echo no)"
+wait
 
 publish "42:$secret" 15 >/dev/null &
 sleep 4
