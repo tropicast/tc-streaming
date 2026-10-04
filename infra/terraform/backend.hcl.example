@@ -1,0 +1,21 @@
+# Copy to backend.hcl (git-ignored) and run: terraform init -backend-config=backend.hcl
+# Example for Hetzner Object Storage (S3-compatible). Credentials come from
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+bucket = "tropicast-tfstate"
+key    = "tc-streaming/mvp.tfstate"
+region = "fsn1"
+
+endpoints = {
+  s3 = "https://fsn1.your-objectstorage.com"
+}
+
+use_path_style              = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_s3_checksum            = true
+
+# State locking with a lock file needs S3 conditional writes; enable it only
+# after checking the storage provider supports them.
+# use_lockfile = true
