@@ -1,0 +1,118 @@
+name: Terraform deploy
+
+# Manual plan/apply of infra/terraform against production.
+# Setup: docs/how-to/provision-hetzner-with-ci.md
+#
+# 1. Run with action=plan and read the plan in the run summary.
+# 2. Run with action=apply and plan_run_id=<that run's ID> to apply
+#    exactly that saved plan. Terraform refuses it if the state changed.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: plan, or apply a reviewed plan
+        type: choice
+        options: [plan, apply]
+        default: plan
+      plan_run_id:
+        description: "apply only: ID of the plan run to apply (from its URL)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+# No state locking on the bucket yet: never run two of these at once.
+concurrency:
+  group: terraform-production
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_KEY }}
+
+defaults:
+  run:
+    working-directory: infra/terraform
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Allow only main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Run this workflow from main." >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Write backend and variables
+        env:
+          TFVARS: ${{ vars.TFVARS }}
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          STATE_LOCATION: ${{ vars.TF_STATE_LOCATION }}
+        run: ./ci-config.sh
+
+      - run: terraform init -backend-config=backend.hcl
+
+      - name: Plan
+        if: inputs.action == 'plan'
+        run: terraform plan -out=tfplan
+
+      - name: Show the plan in the run summary
+        if: inputs.action == 'plan'
+        run: |
+          {
+            echo '## Terraform plan'
+            echo "To apply it, run this workflow with action=apply and plan_run_id=${GITHUB_RUN_ID}."
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - if: inputs.action == 'plan'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/terraform/tfplan
+          retention-days: 3
+
+      - name: Check the plan run ID
+        if: inputs.action == 'apply'
+        env:
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+        run: |
+          if [[ ! $PLAN_RUN_ID =~ ^[0-9]+$ ]]; then
+            echo "Set plan_run_id to the numeric ID of a plan run." >&2
+            exit 1
+          fi
+
+      - if: inputs.action == 'apply'
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra/terraform
+          run-id: ${{ inputs.plan_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Apply the reviewed plan
+        if: inputs.action == 'apply'
+        run: terraform apply tfplan
+
+      - name: Show outputs
+        if: inputs.action == 'apply'
+        run: |
+          {
+            echo '## Terraform outputs'
+            echo '```'
+            terraform output
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

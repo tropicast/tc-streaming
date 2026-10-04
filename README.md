@@ -72,6 +72,9 @@ terraform plan
 terraform apply
 ```
 
+To provision from GitHub Actions instead, follow
+[docs/how-to/provision-hetzner-with-ci.md](docs/how-to/provision-hetzner-with-ci.md).
+
 `backend.hcl`, `terraform.tfvars` and state files are git-ignored. Delete
 protection must be turned off in `main.tf` before `terraform destroy` can
 remove the server or IPs.
