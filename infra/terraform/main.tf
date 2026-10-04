@@ -126,6 +126,7 @@ resource "hcloud_zone_rrset" "streaming" {
   labels   = local.labels
 
   records = [{
-    value = each.value.type == "A" ? hcloud_primary_ip.ipv4.ip_address : hcloud_primary_ip.ipv6.ip_address
+    # The IPv6 primary IP is a /64 network; the server answers on its ::1.
+    value = each.value.type == "A" ? hcloud_primary_ip.ipv4.ip_address : hcloud_server.streaming.ipv6_address
   }]
 }
