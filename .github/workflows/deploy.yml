@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_SERVER: ${{ vars.DEPLOY_SERVER || 'tc-stream-1' }}
       REMOTE_ROOT: /opt/tc-streaming
     steps:
       - name: Allow only main
@@ -65,6 +66,13 @@ jobs:
           docker buildx imagetools inspect "ghcr.io/tropicast/icecast:$IMAGE_TAG" >/dev/null
           docker logout ghcr.io
 
+      # The node's firewall only allows admin CIDRs on SSH. Open port 22 to
+      # this runner alone for the length of the job; closed again below.
+      - name: Open SSH for this runner
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: deploy/ci-ssh-access.sh open "$GITHUB_RUN_ID"
+
       - name: Set up SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -85,8 +93,15 @@ jobs:
             IdentitiesOnly yes
             StrictHostKeyChecking yes
             BatchMode yes
+            ConnectTimeout 10
           CFG
-          ssh node true
+          # The firewall change can take a few seconds to reach the node.
+          for attempt in $(seq 1 12); do
+            ssh node true && exit 0
+            echo "SSH not reachable yet (attempt $attempt)"
+            sleep 5
+          done
+          exit 1
 
       - name: Write secrets to the node
         env:
@@ -153,6 +168,12 @@ jobs:
           check "https://$LISTEN_HOST/admin/stats.xml" 404
           check "https://$LISTEN_HOST/status-json.xsl" 404
           check "https://$INGEST_HOST/stations/0/live.mp3" 404
+
+      - name: Close SSH for this runner
+        if: always()
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: deploy/ci-ssh-access.sh close "$GITHUB_RUN_ID"
 
       - name: Summary
         if: always()

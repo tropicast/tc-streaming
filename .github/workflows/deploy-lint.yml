@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck deploy/deploy.sh tests/*.sh
+        run: shellcheck deploy/*.sh tests/*.sh
       - name: Validate the production Compose file
         run: |
           env_file=$(mktemp)
