@@ -1,0 +1,25 @@
+name: Ansible
+
+on:
+  pull_request:
+    paths:
+      - infra/ansible/**
+      - .github/workflows/ansible.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/ansible/**
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/ansible
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ansible-lint site.yml

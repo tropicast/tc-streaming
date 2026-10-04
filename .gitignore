@@ -6,3 +6,5 @@ __pycache__/
 *.tfvars
 !*.tfvars.example
 backend.hcl
+infra/ansible/inventory.ini
+infra/ansible/group_vars/

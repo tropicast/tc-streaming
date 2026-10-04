@@ -75,3 +75,34 @@ terraform apply
 `backend.hcl`, `terraform.tfvars` and state files are git-ignored. Delete
 protection must be turned off in `main.tf` before `terraform destroy` can
 remove the server or IPs.
+
+## Node hardening (Ansible)
+
+`infra/ansible/site.yml` prepares a node created by Terraform (issue #4):
+
+- Users: `ops` for admins (sudo) and `deploy` for the deploy pipeline (no
+  sudo, `docker` group). Membership of the `docker` group is
+  root-equivalent, so only the pipeline key logs in as `deploy`.
+- SSH: keys only, no root login, only `ops` and `deploy` allowed.
+  fail2ban bans repeated failures.
+- Unattended security upgrades, with automatic reboots turned **off**:
+  a reboot drops every listener. Reboot by hand in the maintenance window.
+- Time zone UTC with NTP sync.
+- Kernel tuning for many long-lived connections, BBR congestion control,
+  and a high open-file limit for services.
+- Docker Engine and the Compose plugin from Docker's apt repository.
+  `live-restore` keeps containers running while the Docker daemon
+  restarts. Logs rotate (`local` driver, 5 × 20 MB per container).
+  Containers get a 65536 open-file limit.
+- `/opt/tc-streaming`, owned by `deploy`, for the Compose project. Secrets
+  (`.env`) are written there at deploy time (#11) and never committed.
+
+```sh
+cd infra/ansible
+cp inventory.example.ini inventory.ini
+mkdir -p group_vars && cp group_vars_example.yml group_vars/streaming.yml
+uvx --from ansible ansible-playbook site.yml   # or: ansible-playbook site.yml
+```
+
+Run it first as `root`. That run turns off root login, so set
+`ansible_user=ops` in `inventory.ini` for later runs.
