@@ -1,28 +1,55 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Production config for a shared multi-tenant origin node (issue #5).
+     Passwords and <hostname> are filled in at startup by
+     docker-entrypoint.py; never commit real values here. -->
 <icecast>
-    <location>Local POC</location>
-    <admin>icemaster@localhost</admin>
+    <location>Tropicast</location>
+    <admin>ops@tropicast.invalid</admin>
     <hostname>localhost</hostname>
+
+    <!-- Sized for one Hetzner CX33 (4 vCPU, 8 GB, 20 TB/month egress).
+         20 TB/month sustained is about 62 Mbit/s: roughly 960 listeners at
+         64 kbps or 480 at 128 kbps around the clock. Peaks may go higher
+         because the quota is monthly. Revisit after the load test (#12). -->
     <limits>
-        <clients>100</clients>
-        <sources>2</sources>
+        <!-- All connections: listeners, sources and admin requests. -->
+        <clients>1500</clients>
+        <!-- Live station mounts on this node. -->
+        <sources>50</sources>
+        <!-- Per-listener backlog before a slow client is dropped
+             (512 KiB is about 65 s at 64 kbps). -->
         <queue-size>524288</queue-size>
+        <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
+        <!-- Drop a silent source after 10 s so the desktop app reconnects. -->
         <source-timeout>10</source-timeout>
-        <burst-size>65535</burst-size>
+        <!-- Initial burst: about 8 s at 64 kbps for a fast start. -->
+        <burst-size>65536</burst-size>
     </limits>
+
     <authentication>
+        <!-- Global source password: internal break-glass only. Never give
+             it to customers. -->
         <source-password />
+        <!-- Relay password: generated per node unless supplied. -->
         <relay-password />
         <admin-user>admin</admin-user>
         <admin-password />
     </authentication>
+
+    <!-- Icecast listens on all interfaces inside the container only.
+         The container port is never published to the internet: Caddy is
+         the only public entry point (#6) and the host firewall keeps
+         port 8000 closed (#3). -->
     <listen-socket>
         <port>8000</port>
-        <!-- Docker port forwarding requires listening on the container interface. -->
         <bind-address>0.0.0.0</bind-address>
     </listen-socket>
-    <fileserve>1</fileserve>
+
+    <!-- No static file serving from webroot; status pages still work for
+         the private healthcheck and metrics. -->
+    <fileserve>0</fileserve>
+
     <paths>
         <basedir>/usr/local/share/icecast</basedir>
         <logdir>/run/icecast</logdir>
@@ -30,13 +57,16 @@
         <adminroot>/usr/local/share/icecast/admin</adminroot>
         <reportxmldb>/usr/local/share/icecast/report-db.xml</reportxmldb>
         <pidfile>/run/icecast/icecast.pid</pidfile>
-        <alias source="/" destination="/status.xsl" />
     </paths>
+
+    <!-- Both logs go to stdout for Docker. The access log records the
+         source username, never the password. -->
     <logging>
         <accesslog>-</accesslog>
         <errorlog>-</errorlog>
         <loglevel>information</loglevel>
     </logging>
+
     <security>
         <chroot>false</chroot>
         <prng-seed type="profile">linux</prng-seed>

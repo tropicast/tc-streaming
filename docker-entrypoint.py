@@ -34,6 +34,9 @@ def main():
         ),
     }
     tree = ET.parse("/etc/icecast/icecast.xml")
+    hostname = os.environ.get("ICECAST_HOSTNAME")
+    if hostname:
+        tree.find("./hostname").text = hostname
     for tag, value in credentials.items():
         element = tree.find(f"./authentication/{tag}")
         if element is None:
@@ -46,6 +49,7 @@ def main():
         "ICECAST_SOURCE_PASSWORD",
         "ICECAST_ADMIN_PASSWORD",
         "ICECAST_RELAY_PASSWORD",
+        "ICECAST_HOSTNAME",
     ):
         os.environ.pop(name, None)
     os.execv("/usr/local/bin/icecast", ["icecast", "-c", str(config)])
