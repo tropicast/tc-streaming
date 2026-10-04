@@ -22,6 +22,32 @@ def password(name):
     return value
 
 
+def required(name):
+    value = os.environ.get(name)
+    if not value:
+        sys.exit(f"{name} must be set")
+    return value
+
+
+def configure_source_auth(tree):
+    role = tree.find("./mount[@type='default']/authentication/role[@type='url']")
+    if role is None:
+        sys.exit("Icecast configuration is missing the source auth role")
+    url = required("ICECAST_SOURCE_AUTH_URL")
+    if not url.startswith(("http://", "https://")) or "@" in url:
+        sys.exit("ICECAST_SOURCE_AUTH_URL must be an http(s) URL without credentials")
+    values = {
+        "client_add": url,
+        "username": required("ICECAST_SOURCE_AUTH_USER"),
+        "password": password("ICECAST_SOURCE_AUTH_PASSWORD"),
+    }
+    for name, value in values.items():
+        option = role.find(f"./option[@name='{name}']")
+        if option is None:
+            sys.exit(f"Source auth role is missing option {name}")
+        option.set("value", value)
+
+
 def main():
     os.umask(0o077)
     credentials = {
@@ -42,6 +68,7 @@ def main():
         if element is None:
             sys.exit(f"Icecast configuration is missing authentication/{tag}")
         element.text = value
+    configure_source_auth(tree)
     config = Path("/run/icecast/icecast.xml")
     tree.write(config, encoding="utf-8", xml_declaration=True)
     os.chmod(config, 0o600)
@@ -50,6 +77,9 @@ def main():
         "ICECAST_ADMIN_PASSWORD",
         "ICECAST_RELAY_PASSWORD",
         "ICECAST_HOSTNAME",
+        "ICECAST_SOURCE_AUTH_URL",
+        "ICECAST_SOURCE_AUTH_USER",
+        "ICECAST_SOURCE_AUTH_PASSWORD",
     ):
         os.environ.pop(name, None)
     os.execv("/usr/local/bin/icecast", ["icecast", "-c", str(config)])
