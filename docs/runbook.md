@@ -124,16 +124,25 @@ The workflow:
 
 1. Checks that the commit is on `main` and that its Icecast image exists in
    GHCR.
-2. Writes `.env` on the node from GitHub secrets and variables (over SSH
+2. Opens SSH to the runner's own IPv4 only: it attaches a temporary Hetzner
+   firewall (`ci-deploy-<run-id>`, label `purpose=ci-deploy`) with
+   `HCLOUD_TOKEN`. A final step always removes it, and the next deploy
+   removes any leftover.
+3. Writes `.env` on the node from GitHub secrets and variables (over SSH
    stdin, never on a command line).
-3. Uploads the bundle (`deploy/compose.yaml`, `deploy/deploy.sh`,
+4. Uploads the bundle (`deploy/compose.yaml`, `deploy/deploy.sh`,
    `caddy/Caddyfile`, `auth-stub/server.py`).
-4. Logs the node in to GHCR with the job's short-lived token, runs
+5. Logs the node in to GHCR with the job's short-lived token, runs
    `deploy.sh activate`, then logs out.
-5. Checks that `https://<listen>/admin/stats.xml` and
+6. Checks that `https://<listen>/admin/stats.xml` and
    `/status-json.xsl` return 404 through Caddy.
 
-Only one deploy runs at a time. The repository's free plan has no
+Only one deploy runs at a time. While a deploy runs, a Terraform plan
+shows the temporary firewall as a change to the server; do not apply it
+until the deploy has finished.
+
+Optional variable: `DEPLOY_SERVER`, the Hetzner server name (default
+`tc-stream-1`). The repository's free plan has no
 environment approvals, so whoever starts the workflow is the approver.
 
 ## Roll back
