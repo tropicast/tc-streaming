@@ -37,6 +37,10 @@ You need:
 - Owner or admin access to the `tropicast/tc-streaming` GitHub repository.
 - A Hetzner account that can create Cloud projects and Object Storage.
 - `gh` (GitHub CLI) logged in, and `ssh-keygen`, on your machine.
+- `dig` and `nc` for the checks. On Arch/Omarchy:
+  `omarchy pkg add bind openbsd-netcat` (or
+  `sudo pacman -S bind openbsd-netcat`). On Debian/Ubuntu:
+  `sudo apt install dnsutils netcat-openbsd`.
 
 ## 1. Create the Hetzner Cloud project
 
@@ -75,9 +79,25 @@ time, so never run `terraform apply` from a laptop while it is running.
 
 To let Terraform create `listen.<domain>` and `ingest.<domain>`:
 
-1. In the same project, open **DNS → Add zone** and add your domain.
-2. At your domain registrar, set the name servers to the ones Hetzner
-   lists for the zone.
+1. Check that you control the domain: you can log in at its registrar and
+   change its name servers. `whois <domain>` shows the registrar and the
+   current name servers.
+2. In the same project, open **DNS → Add zone** and add your domain.
+3. Before switching, copy any records the domain still needs (website,
+   email) into the Hetzner zone. Once the name servers change, only the
+   Hetzner zone answers.
+4. At your domain registrar, replace the name servers with the ones Hetzner
+   lists for the zone (for example `hydrogen.ns.hetzner.com`,
+   `oxygen.ns.hetzner.com` and `helium.ns.hetzner.de`).
+5. Check the delegation. It can take from a few minutes to 48 hours:
+
+   ```sh
+   dig +short NS <domain> @1.1.1.1   # must list the Hetzner name servers
+   ```
+
+   Until it does, the Hetzner Console shows **Invalid zone delegation**.
+   That does not block `terraform apply`; the records exist in the zone
+   but nobody can resolve them yet.
 
 Skip this to manage DNS elsewhere. Then leave `dns_zone = null` and point
 the records at the IPs from the workflow output by hand.
@@ -165,13 +185,42 @@ When it finishes, the run summary lists `ipv4`, `ipv6`, `server_id` and
 
 ## 8. Check the node
 
+Run these from your own machine, **not on the node**. Traffic the node
+sends to its own address skips the Hetzner firewall, so a check on the node
+proves nothing.
+
 ```sh
-ssh -i ~/.ssh/tropicast_admin root@<ipv4>   # works from an admin CIDR
-nc -zv -w 3 <ipv4> 8000                     # must fail: Icecast port closed
-dig +short listen.<domain>                  # returns <ipv4> (if DNS is set)
+ssh -i ~/.ssh/tropicast_admin root@<ipv4>   # connects (you are in admin_cidrs)
+nc -zv -w 3 <ipv4> 8000                     # must time out
 ```
 
-DNS can take a few minutes after the name server change.
+| `nc` result for port 8000 | Meaning |
+|---|---|
+| `timed out` | Correct: the firewall drops the connection. |
+| `Connection refused` | The packet reached the node: the firewall is not applied, or you ran the check on the node. |
+| `succeeded` | Port 8000 is open to the internet. Stop and fix the firewall. |
+
+If you set `dns_zone`, check DNS through a public resolver:
+
+```sh
+dig +short NS <domain> @1.1.1.1            # the Hetzner name servers
+dig +short listen.<domain> @1.1.1.1        # <ipv4>
+dig +short AAAA listen.<domain> @1.1.1.1   # <ipv6>
+```
+
+If `dig` prints nothing, look at the full answer:
+
+```sh
+dig NS <domain> @1.1.1.1
+dig NS <domain> @a.gtld-servers.net +norec  # what the .com registry delegates to
+```
+
+- `status: SERVFAIL` with `EDE: 22 (No Reachable Authority)`, or the
+  registry still listing the old name servers: the registrar change
+  (section 3, step 4) is not done or not live yet.
+- The registry lists the Hetzner name servers but `listen.<domain>` is
+  empty: wait for caches to expire (up to 48 hours), or check the records
+  in **DNS → your zone**.
 
 ## Next steps
 
@@ -192,6 +241,8 @@ DNS can take a few minutes after the name server change.
 | `Run this workflow from main.` | Start it with `--ref main`. |
 | `zone not found` | The DNS zone is in another project, or `dns_zone` is misspelled. |
 | `delete protection` errors on destroy | Intended. Turn protection off in `main.tf` in a reviewed PR first. |
+| Hetzner Console: **Invalid zone delegation** | The registrar still points the domain at other name servers. See section 3. |
+| `dig` on the node: `communications error ... timed out` | The node's resolver is waiting on a broken delegation. Fix the delegation; test from your machine with `@1.1.1.1`. |
 
 ## Changing the node later
 
