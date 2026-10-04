@@ -56,12 +56,37 @@ start() {
         log "icecast image changes to $image_tag: live listeners will reconnect"
     fi
 
+    local caddy_before="" caddy_after=""
+    caddy_before=$(caddy_started_at)
+
     log "starting services"
     compose up -d --wait --remove-orphans
 
-    # Pick up Caddyfile changes without dropping connections.
-    log "reloading caddy"
-    compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force >/dev/null
+    # A Caddy container that this deploy started already runs the new
+    # Caddyfile. Reloading it right away would interrupt its first
+    # certificate requests.
+    caddy_after=$(caddy_started_at)
+    if [[ -n $caddy_before && $caddy_before == "$caddy_after" ]]; then
+        # Pick up Caddyfile changes without dropping connections. Without
+        # --force, Caddy does nothing when the config is unchanged.
+        log "reloading caddy"
+        local out
+        if ! out=$(compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>&1); then
+            printf '%s\n' "$out" | grep -v '"level":"info"' >&2
+            log "caddy reload failed"
+            return 1
+        fi
+    else
+        log "caddy started with the new config"
+    fi
+}
+
+caddy_started_at() {
+    local id
+    id=$(compose ps -q caddy 2>/dev/null || true)
+    if [[ -n $id ]]; then
+        docker inspect -f '{{.State.StartedAt}}' "$id" 2>/dev/null || true
+    fi
 }
 
 record() {
@@ -72,7 +97,9 @@ record() {
     printf '%s %s\n' "$sha" "$image_tag" > CURRENT
     # Keep the newest releases plus whatever CURRENT and PREVIOUS point at.
     local protected
-    protected=$(cat CURRENT PREVIOUS 2>/dev/null | cut -d' ' -f1 | sort -u)
+    protected=$(for f in CURRENT PREVIOUS; do
+        if [[ -f $f ]]; then cut -d' ' -f1 "$f"; fi
+    done | sort -u)
     # Release names are git SHAs, so ls is safe here.
     # shellcheck disable=SC2012
     ls -1t releases | tail -n +$((keep_releases + 1)) | while read -r old; do
