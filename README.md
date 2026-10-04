@@ -35,6 +35,29 @@ ffmpeg -re -f lavfi -i 'sine=frequency=440' -c:a libmp3lame -b:a 128k \
 
 Listen at `http://127.0.0.1:8000/test.mp3`. Keep `.env` private.
 
+### Production configuration
+
+`icecast.xml` is the production config for one shared multi-tenant node
+(issue #5):
+
+- Each station gets the mounts `/stations/{station-id}/live.mp3` and
+  `/stations/{station-id}/live.opus`.
+- Limits are sized for a CX33 and its 20 TB monthly egress quota: 1500
+  clients and 50 live sources. The config file explains the numbers; the
+  load test (#12) will confirm them.
+- Icecast is never exposed directly. Caddy is the only public entry point
+  and the firewall keeps port 8000 closed.
+- Static file serving is off. The root page returns 404, while
+  `/status-json.xsl` still works for the healthcheck.
+- Logs go to stdout. The access log records the source username, never the
+  password.
+- `ICECAST_HOSTNAME` sets the public hostname Icecast reports.
+- The global source password is an internal break-glass secret only.
+- The relay password is generated per node unless `ICECAST_RELAY_PASSWORD`
+  is set.
+- Compose raises the container's open-file limit to 65536, because each
+  listener holds one file descriptor.
+
 ### CI
 
 `.github/workflows/image.yml` builds the image, runs a health smoke test and
