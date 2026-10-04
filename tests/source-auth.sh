@@ -19,10 +19,14 @@ ICECAST_SOURCE_AUTH_USER=icecast
 ICECAST_SOURCE_AUTH_PASSWORD=$(openssl rand -hex 24)
 ICECAST_PORT=$port
 STUB_STATIONS=42:$secret42,77:$secret77
+LISTEN_HOST=listen.localhost
+INGEST_HOST=ingest.localhost
+ACME_EMAIL=dev@example.com
 ENV
 
 compose() { docker compose -p "$project" --env-file "$env_file" "$@"; }
-compose up -d --build --wait >/dev/null
+# Icecast and the stub only; the gateway has its own test.
+compose up -d --build --wait icecast auth-stub >/dev/null
 
 failures=0
 check() {
