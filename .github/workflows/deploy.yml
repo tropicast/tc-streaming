@@ -1,0 +1,168 @@
+name: Deploy
+
+# Deploy the Icecast + Caddy stack to the streaming node (#11).
+# Setup and operations: docs/runbook.md
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit on main to deploy (SHA, or "main"). Use an older SHA to roll back.
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      REMOTE_ROOT: /opt/tc-streaming
+    steps:
+      - name: Allow only main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Run this workflow from main." >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Resolve the release
+        id: release
+        run: |
+          sha=$(git rev-parse HEAD)
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "$sha is not on main." >&2
+            exit 1
+          fi
+          # The image only changes when its inputs change. Reusing the tag of
+          # the last main commit that touched them avoids restarting Icecast
+          # (and dropping listeners) on deploys that do not change it.
+          image_sha=$(git log -1 --first-parent --format=%H "$sha" -- \
+            Dockerfile docker-entrypoint.py icecast.xml .dockerignore)
+          {
+            echo "sha=$sha"
+            echo "image_tag=sha-$image_sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "Deploying $sha with ghcr.io/tropicast/icecast:sha-$image_sha"
+
+      - name: Check the image exists
+        env:
+          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker buildx imagetools inspect "ghcr.io/tropicast/icecast:$IMAGE_TAG" >/dev/null
+          docker logout ghcr.io
+
+      - name: Set up SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          : "${DEPLOY_HOST:?Set the DEPLOY_HOST variable}"
+          : "${DEPLOY_SSH_KEY:?Set the DEPLOY_SSH_KEY secret}"
+          : "${DEPLOY_KNOWN_HOSTS:?Set the DEPLOY_KNOWN_HOSTS variable}"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 0600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CFG
+          Host node
+            HostName $DEPLOY_HOST
+            User deploy
+            IdentityFile ~/.ssh/id_ed25519
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+          CFG
+          ssh node true
+
+      - name: Write secrets to the node
+        env:
+          ICECAST_SOURCE_PASSWORD: ${{ secrets.ICECAST_SOURCE_PASSWORD }}
+          ICECAST_ADMIN_PASSWORD: ${{ secrets.ICECAST_ADMIN_PASSWORD }}
+          ICECAST_RELAY_PASSWORD: ${{ secrets.ICECAST_RELAY_PASSWORD }}
+          ICECAST_SOURCE_AUTH_PASSWORD: ${{ secrets.ICECAST_SOURCE_AUTH_PASSWORD }}
+          STUB_STATIONS: ${{ secrets.STUB_STATIONS }}
+          ICECAST_SOURCE_AUTH_URL: ${{ vars.ICECAST_SOURCE_AUTH_URL }}
+          ICECAST_SOURCE_AUTH_USER: ${{ vars.ICECAST_SOURCE_AUTH_USER || 'icecast' }}
+          LISTEN_HOST: ${{ vars.LISTEN_HOST }}
+          INGEST_HOST: ${{ vars.INGEST_HOST }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+          COMPOSE_PROFILES: ${{ vars.COMPOSE_PROFILES }}
+        run: |
+          required=(ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD ICECAST_RELAY_PASSWORD
+                    ICECAST_SOURCE_AUTH_PASSWORD ICECAST_SOURCE_AUTH_URL LISTEN_HOST
+                    INGEST_HOST ACME_EMAIL)
+          for name in "${required[@]}"; do
+            [[ -n ${!name} ]] || { echo "Missing secret or variable: $name" >&2; exit 1; }
+          done
+          names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS)
+          # Sent over stdin, never on a command line.
+          for name in "${names[@]}"; do
+            printf '%s=%s\n' "$name" "${!name}"
+          done | ssh node "umask 077 && cat > $REMOTE_ROOT/.env.new && mv $REMOTE_ROOT/.env.new $REMOTE_ROOT/.env"
+
+      - name: Upload the release bundle
+        run: |
+          bundle=$(mktemp -d)
+          cp deploy/compose.yaml deploy/deploy.sh caddy/Caddyfile auth-stub/server.py "$bundle/"
+          tar -C "$bundle" -cz . |
+            ssh node "rm -rf $REMOTE_ROOT/incoming && install -d -m 0750 $REMOTE_ROOT/incoming && tar -xz -C $REMOTE_ROOT/incoming"
+
+      - name: Activate
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Short-lived registry login: the job token expires when the job ends.
+          echo "$GH_TOKEN" | ssh node "docker login ghcr.io -u '${{ github.actor }}' --password-stdin" >/dev/null
+          status=0
+          ssh node "bash $REMOTE_ROOT/incoming/deploy.sh activate $REMOTE_ROOT/incoming $SHA $IMAGE_TAG" || status=$?
+          ssh node "docker logout ghcr.io" >/dev/null || true
+          exit "$status"
+
+      - name: Check the public endpoints
+        env:
+          LISTEN_HOST: ${{ vars.LISTEN_HOST }}
+          INGEST_HOST: ${{ vars.INGEST_HOST }}
+        run: |
+          # The first deploy may wait for Let's Encrypt; retry for ~2 minutes.
+          check() {
+            local url=$1 expected=$2 code
+            for _ in $(seq 1 24); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" || true)
+              [[ $code == "$expected" ]] && { echo "ok   $url -> $code"; return 0; }
+              sleep 5
+            done
+            echo "FAIL $url -> $code (expected $expected)" >&2
+            return 1
+          }
+          check "https://$LISTEN_HOST/admin/stats.xml" 404
+          check "https://$LISTEN_HOST/status-json.xsl" 404
+          check "https://$INGEST_HOST/stations/0/live.mp3" 404
+
+      - name: Summary
+        if: always()
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+        run: |
+          {
+            echo "## Deploy"
+            echo "- Commit: \`$SHA\`"
+            echo "- Icecast image: \`ghcr.io/tropicast/icecast:$IMAGE_TAG\`"
+            echo "- Node: \`$DEPLOY_HOST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

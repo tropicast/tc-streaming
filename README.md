@@ -181,3 +181,14 @@ uvx --from ansible ansible-playbook site.yml   # or: ansible-playbook site.yml
 
 Run it first as `root`. That run turns off root login, so set
 `ansible_user=ops` in `inventory.ini` for later runs.
+
+## Deploy and operations
+
+`deploy/compose.yaml` is the production stack: Icecast from GHCR with no
+published port, and Caddy on ports 80/443. The **Deploy** workflow
+(`.github/workflows/deploy.yml`) ships it to the node and
+`deploy/deploy.sh` activates it, keeping the last 5 releases for rollback
+(issue #11).
+
+[docs/runbook.md](docs/runbook.md) covers first-time setup, deploys,
+rollbacks, what restarts what, and incidents.
