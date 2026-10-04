@@ -29,4 +29,4 @@ jobs:
                       LISTEN_HOST INGEST_HOST ACME_EMAIL; do
             echo "$name=placeholder" >> "$env_file"
           done
-          ICECAST_IMAGE_TAG=sha-test docker compose -f deploy/compose.yaml --env-file "$env_file" --profile stub config --quiet
+          ICECAST_IMAGE_TAG=sha-test CADDY_IMAGE_TAG=sha-test docker compose -f deploy/compose.yaml --env-file "$env_file" --profile stub config --quiet

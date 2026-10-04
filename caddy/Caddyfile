@@ -3,6 +3,43 @@
 {
 	email {$ACME_EMAIL}
 	{$CADDY_GLOBAL_OPTIONS}
+
+	# Broadcasters on INGEST_HOST bypass HTTP handling. Icecast source
+	# clients (the desktop app, BUTT, Mixxx, FFmpeg's icecast://) send PUT or
+	# SOURCE with no Content-Length and stream until they disconnect. An HTTP
+	# proxy forwards no body for such a request, so the layer4 module
+	# decrypts TLS and passes the raw connection to Icecast. Only a
+	# PUT/SOURCE request line for a station mount is passed on; any other
+	# connection to INGEST_HOST is closed. Connections for other hostnames
+	# fall through to the normal HTTPS server below.
+	servers :443 {
+		listener_wrappers {
+			layer4 {
+				@ingest tls sni {$INGEST_HOST}
+				route @ingest {
+					# HTTP/1.1 only: Icecast does not speak HTTP/2.
+					tls {
+						connection_policy {
+							alpn http/1.1
+						}
+					}
+					subroute {
+						@source http {
+							method PUT SOURCE
+							path_regexp ^/stations/[A-Za-z0-9-]{1,64}/live\.(mp3|opus)$
+						}
+						route @source {
+							proxy icecast:8000
+						}
+						route {
+							close
+						}
+					}
+				}
+			}
+			tls
+		}
+	}
 }
 
 (common) {
@@ -50,22 +87,10 @@
 	}
 }
 
-# Broadcasters: the desktop app publishes with HTTP PUT.
+# Broadcasters. HTTPS connections are handled by the layer4 route in the
+# global options; this site block only gives Caddy a certificate for the
+# host and answers plain HTTP.
 {$INGEST_HOST} {
 	import common
-
-	@source {
-		method PUT SOURCE
-		path_regexp ^/stations/[A-Za-z0-9-]{1,64}/live\.(mp3|opus)$
-	}
-
-	handle @source {
-		reverse_proxy icecast:8000 {
-			flush_interval -1
-		}
-	}
-
-	handle {
-		respond 404
-	}
+	respond 404
 }

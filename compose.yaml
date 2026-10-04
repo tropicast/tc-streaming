@@ -20,7 +20,8 @@ services:
       - "127.0.0.1:${ICECAST_PORT:-8000}:8000"
 
   caddy:
-    image: caddy:2.11.6
+    build: ./caddy
+    image: tropicast-caddy:local
     restart: unless-stopped
     depends_on:
       icecast:

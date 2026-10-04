@@ -51,19 +51,24 @@ jobs:
           # (and dropping listeners) on deploys that do not change it.
           image_sha=$(git log -1 --first-parent --format=%H "$sha" -- \
             Dockerfile docker-entrypoint.py icecast.xml .dockerignore)
+          caddy_sha=$(git log -1 --first-parent --format=%H "$sha" -- \
+            caddy/Dockerfile caddy/.dockerignore)
           {
             echo "sha=$sha"
             echo "image_tag=sha-$image_sha"
+            echo "caddy_tag=sha-$caddy_sha"
           } >> "$GITHUB_OUTPUT"
-          echo "Deploying $sha with ghcr.io/tropicast/icecast:sha-$image_sha"
+          echo "Deploying $sha with icecast:sha-$image_sha and caddy:sha-$caddy_sha"
 
-      - name: Check the image exists
+      - name: Check the images exist
         env:
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker buildx imagetools inspect "ghcr.io/tropicast/icecast:$IMAGE_TAG" >/dev/null
+          docker buildx imagetools inspect "ghcr.io/tropicast/caddy:$CADDY_TAG" >/dev/null
           docker logout ghcr.io
 
       # The node's firewall only allows admin CIDRs on SSH. Open port 22 to
@@ -130,22 +135,25 @@ jobs:
           done | ssh node "umask 077 && cat > $REMOTE_ROOT/.env.new && mv $REMOTE_ROOT/.env.new $REMOTE_ROOT/.env"
 
       - name: Upload the release bundle
+        env:
+          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
         run: |
           bundle=$(mktemp -d)
           cp deploy/compose.yaml deploy/deploy.sh caddy/Caddyfile auth-stub/server.py "$bundle/"
+          printf 'ICECAST_IMAGE_TAG=%s\nCADDY_IMAGE_TAG=%s\n' "$IMAGE_TAG" "$CADDY_TAG" > "$bundle/release.env"
           tar -C "$bundle" -cz . |
             ssh node "rm -rf $REMOTE_ROOT/incoming && install -d -m 0750 $REMOTE_ROOT/incoming && tar -xz -C $REMOTE_ROOT/incoming"
 
       - name: Activate
         env:
           SHA: ${{ steps.release.outputs.sha }}
-          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           # Short-lived registry login: the job token expires when the job ends.
           echo "$GH_TOKEN" | ssh node "docker login ghcr.io -u '${{ github.actor }}' --password-stdin" >/dev/null
           status=0
-          ssh node "bash $REMOTE_ROOT/incoming/deploy.sh activate $REMOTE_ROOT/incoming $SHA $IMAGE_TAG" || status=$?
+          ssh node "bash $REMOTE_ROOT/incoming/deploy.sh activate $REMOTE_ROOT/incoming $SHA" || status=$?
           ssh node "docker logout ghcr.io" >/dev/null || true
           exit "$status"
 
@@ -180,10 +188,12 @@ jobs:
         env:
           SHA: ${{ steps.release.outputs.sha }}
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
         run: |
           {
             echo "## Deploy"
             echo "- Commit: \`$SHA\`"
             echo "- Icecast image: \`ghcr.io/tropicast/icecast:$IMAGE_TAG\`"
+            echo "- Caddy image: \`ghcr.io/tropicast/caddy:$CADDY_TAG\`"
             echo "- Node: \`$DEPLOY_HOST\`"
           } >> "$GITHUB_STEP_SUMMARY"

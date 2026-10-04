@@ -21,7 +21,9 @@ services:
         hard: 65536
 
   caddy:
-    image: caddy:2.11.6
+    # Caddy with the layer4 module (caddy/Dockerfile): the ingest host
+    # passes raw Icecast source streams through after TLS.
+    image: ghcr.io/tropicast/caddy:${CADDY_IMAGE_TAG:?CADDY_IMAGE_TAG is set by deploy.sh}
     restart: unless-stopped
     depends_on:
       icecast:
