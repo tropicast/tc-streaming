@@ -212,7 +212,7 @@ errors.
 - Both hostnames must resolve to the node (`dig @1.1.1.1`).
 - Port 80 must be reachable for the ACME HTTP challenge (Hetzner firewall).
 - Cloudflare records must be **DNS only**.
-- Check `docker compose logs caddy | grep -i acme`.
+- Check `/opt/tc-streaming/deploy.sh compose logs caddy | grep -i acme`.
 
 ### Broadcasters are all rejected
 
