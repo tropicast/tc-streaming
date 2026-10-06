@@ -41,15 +41,19 @@ tc-stream-1 (Hetzner)                              Grafana Cloud
 
 ## Values you will collect
 
-Write these down as you go. Treat the two tokens like passwords.
+Write these down as you go. Treat the three tokens like passwords.
 
-| # | Value | Example | Found in step | Stored as |
+| # | Value | Comes from | Looks like | Stored as |
 |---|---|---|---|---|
-| A | Prometheus **push URL** | `https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push` | 1 | GitHub variable `GRAFANA_CLOUD_PROM_URL` |
-| B | Prometheus **username** (a number) | `1234567` | 1 | GitHub variable `GRAFANA_CLOUD_PROM_USER` |
-| C | Token that may **send metrics** | `glc_eyJ…` | 2 | GitHub secret `GRAFANA_CLOUD_TOKEN` |
-| D | Token that may **edit alert rules** | `glc_eyJ…` | 2 | only on your machine, for step 6 |
-| E | Hetzner **read-only** API token | `aBc…` | 3 | GitHub secret `HCLOUD_READ_TOKEN` |
+| A | Prometheus **push URL** | Grafana (step 1) | `https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push` | GitHub variable `GRAFANA_CLOUD_PROM_URL` |
+| B | Prometheus **username** | Grafana (step 1) | only digits, e.g. `1234567` | GitHub variable `GRAFANA_CLOUD_PROM_USER` |
+| C | Grafana token that **sends metrics** | Grafana (step 2) | starts with `glc_` | GitHub secret `GRAFANA_CLOUD_TOKEN` |
+| D | Grafana token that **edits alert rules** | Grafana (step 2) | starts with `glc_` | nowhere: used once in step 6 |
+| E | Hetzner token that **reads traffic** | **Hetzner Console** (step 3) | letters and digits, **never** starts with `glc_` | GitHub secret `HCLOUD_READ_TOKEN` |
+
+C, D and E are easy to mix up: C and D come from Grafana, E from Hetzner.
+Step 4 uses a script that tests each token against its own service and
+refuses a token from the wrong one.
 
 ## Step 1: Create the Grafana Cloud account
 
@@ -71,10 +75,11 @@ note where to send metrics.
 Check: value A starts with `https://prometheus-` and ends with
 `/api/prom/push`; value B is only digits.
 
-## Step 2: Create the two Grafana tokens
+## Step 2: Create the two Grafana tokens (C and D)
 
 Goal: one token that only sends metrics (used by the node) and one that
-only edits alert rules (used by you, once).
+only edits alert rules (used by you, once). Both are created in
+**Grafana**, and both start with `glc_`.
 
 1. In the Cloud Portal, open **Access Policies** (under *Security*).
 2. Click **Create access policy**:
@@ -82,50 +87,64 @@ only edits alert rules (used by you, once).
    - Realm: your stack
    - Scopes: **metrics: Write** only
 3. On the new policy, click **Add token**, name it `tc-stream-1`, and copy
-   the token → value **C**. It is shown only once.
+   the token. Label it **C (Grafana, metrics)**. It is shown only once.
 4. Create a second policy:
    - Name: `tc-rules`
    - Scopes: **rules: Read** and **rules: Write**
-5. Add a token to it and copy it → value **D**.
+5. Add a token to it, copy it, and label it **D (Grafana, rules)**.
 
 Check: both tokens start with `glc_`.
 
-## Step 3: Create the Hetzner read-only token
+## Step 3: Create the Hetzner read-only token (E)
 
 Goal: let the exporter read the node's monthly traffic, without being able
-to change anything.
+to change anything. This token is created in the **Hetzner Console**, not
+in Grafana.
 
-1. Open the Hetzner Console → your project → **Security** → **API tokens**
-   → **Generate API token**.
-2. Description: `tc-stream monitoring`. Permission: **Read**.
-3. Copy the token → value **E**.
+1. Open <https://console.hetzner.com>, then the project that contains
+   `tc-stream-1`.
+2. Open **Security → API tokens → Generate API token**.
+3. Description: `tc-stream monitoring`. Permission: **Read** (not
+   *Read & Write*).
+4. Copy the token and label it **E (Hetzner, read)**.
 
-Do not reuse the *Read & Write* token used by Terraform.
+Check: the token does **not** start with `glc_`. Do not reuse the
+*Read & Write* token that Terraform uses.
 
-## Step 4: Store the values in GitHub
+## Step 4: Check and store the values in GitHub
 
-Goal: the Deploy workflow writes them onto the node.
+Goal: store A, B, C and E where the Deploy workflow reads them, after
+checking each one.
 
-Replace the placeholders with your values A, B, C and E:
-
-```sh
-gh variable set GRAFANA_CLOUD_PROM_URL --body '<value A>'
-gh variable set GRAFANA_CLOUD_PROM_USER --body '<value B>'
-gh secret set GRAFANA_CLOUD_TOKEN      # paste value C when asked
-gh secret set HCLOUD_READ_TOKEN        # paste value E when asked
-```
-
-Turn monitoring on. Keep `stub` in the list as long as the auth stub is in
-use (until the control-plane API exists):
+From the `tc-streaming` folder, run:
 
 ```sh
-gh variable get COMPOSE_PROFILES             # shows the current value, e.g. "stub"
-gh variable set COMPOSE_PROFILES --body 'stub,monitoring'
+monitoring/store-secrets.sh
 ```
 
-Check: `gh variable list` shows `GRAFANA_CLOUD_PROM_URL`,
-`GRAFANA_CLOUD_PROM_USER` and `COMPOSE_PROFILES=stub,monitoring`;
-`gh secret list` shows `GRAFANA_CLOUD_TOKEN` and `HCLOUD_READ_TOKEN`.
+It asks for each value by name (tokens are not shown while you type) and
+stops at the first wrong one, with the reason:
+
+| Check | Catches |
+|---|---|
+| A matches the Grafana push URL format | a URL from the wrong card, missing `/api/prom/push` |
+| B is only digits | the stack name instead of the instance ID |
+| C starts with `glc_` and Grafana Cloud accepts B + C | wrong token, missing `metrics: Write`, wrong username |
+| E is not a Grafana token, Hetzner accepts it and it sees `tc-stream-1` | a Grafana token pasted as E, wrong Hetzner project |
+| E cannot write | a *Read & Write* token |
+
+When all checks pass, it stores the values and adds `monitoring` to
+`COMPOSE_PROFILES` (keeping `stub`). Expected end of the output:
+
+```text
+  ✓ Hetzner token is read-only and sees tc-stream-1
+Storing in GitHub...
+  ✓ Stored. COMPOSE_PROFILES=stub,monitoring
+Next: deploy (step 5).
+```
+
+The script never prints a token or puts it on a command line. If your
+node has another name, run it as `DEPLOY_SERVER=<name> monitoring/store-secrets.sh`.
 
 ## Step 5: Deploy
 
@@ -251,10 +270,10 @@ tags; plain `docker compose` on the node fails without them.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | No metrics in Explore at all | Monitoring not deployed, or wrong URL/user/token | `COMPOSE_PROFILES` must contain `monitoring`; on the node run `/opt/tc-streaming/deploy.sh compose logs alloy` and look for `401` or `404` |
-| `401` in the alloy logs | Token C wrong or without `metrics: Write` | Create a new token (step 2), update `GRAFANA_CLOUD_TOKEN`, deploy |
+| `401` in the alloy logs | Token C wrong or without `metrics: Write` | Create a new token (step 2), run step 4 again, deploy |
 | `404` in the alloy logs | Value A incomplete | It must end in `/api/prom/push` |
 | `icecast_up` is `0` | Exporter cannot read Icecast's statistics | Usually a wrong admin password after a secret change: deploy again |
-| `hetzner_up` is `0` | Token E wrong or not set | Check `HCLOUD_READ_TOKEN`, deploy |
+| `hetzner_up` is `0` | `HCLOUD_READ_TOKEN` holds a Grafana token, a wrong token, or one from another Hetzner project | Create token E (step 3), run step 4 again, deploy |
 | `rules load` returns `401` | Token D wrong or without `rules: Write` | Create a new token for `tc-rules` |
 | Rules loaded but no email | No contact point on the notification policy | Step 7 |
 
