@@ -216,8 +216,11 @@ Check: the test email arrived.
 ## Step 8: Import the dashboard
 
 1. In Grafana, open **Dashboards → New → Import**.
-2. Upload `monitoring/dashboard.json`.
-3. Pick the Prometheus data source from step 5 and click **Import**.
+2. Upload `monitoring/dashboard.json` and click **Import**.
+3. At the top of the dashboard, check the **Data source** drop-down shows
+   `grafanacloud-<stack>-prom` (your metrics). Grafana Cloud also has other
+   Prometheus-type data sources (usage, machine learning) that show
+   *No data*.
 
 Check: the dashboard *Tropicast streaming node* shows `Icecast up` = 1 and
 your live stations.
@@ -284,6 +287,7 @@ tags; plain `docker compose` on the node fails without them.
 | `rules load` returns `401` | Token D wrong or without `rules: Write` | Create a new token for `tc-rules` |
 | `rules load`: `requested resource not found` | The address contains `/api/prom` or `/push` | Use the step 6 commands: the address is only the host, ending in `.grafana.net` |
 | Rules loaded but no email | No contact point on the notification policy | Step 7 |
+| Dashboard shows *No data*, Explore shows `icecast_up` = 1 | Wrong data source on the dashboard | Pick `grafanacloud-<stack>-prom` in the dashboard's **Data source** drop-down |
 
 ## For later
 
