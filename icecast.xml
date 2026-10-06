@@ -51,6 +51,10 @@
                 <option name="action_add" value="stream_auth" />
                 <option name="username" value="" />
                 <option name="password" value="" />
+                <!-- Declared bitrate and format, so the endpoint can enforce
+                     the station's plan (#8). Sent as header.ice-bitrate etc. -->
+                <option name="headers" value="ice-bitrate,ice-audio-info,content-type" />
+                <option name="header_prefix" value="header." />
             </role>
             <role type="anonymous" match-method="source,put" deny-all="*" />
         </authentication>

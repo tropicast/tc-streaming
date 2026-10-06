@@ -5,6 +5,7 @@ TLS, then streams stdin until it ends. Prints the server's first status
 code, or "closed" if the connection ends before any response.
 
     ffmpeg ... -f mp3 - | python3 raw_source.py HOST PORT MOUNT USER:PASS [--method SOURCE] [--ca FILE]
+        [--plain] [--bitrate KBPS]
 """
 
 import argparse
@@ -23,13 +24,20 @@ def main():
     parser.add_argument("--method", default="PUT")
     parser.add_argument("--ca")
     parser.add_argument("--connect", help="IP to connect to instead of resolving HOST")
+    parser.add_argument("--plain", action="store_true", help="no TLS (straight to Icecast)")
+    parser.add_argument("--bitrate", type=int, help="send Ice-Bitrate with this value")
     args = parser.parse_args()
 
-    context = ssl.create_default_context(cafile=args.ca)
     raw = socket.create_connection((args.connect or args.host, args.port), timeout=10)
-    conn = context.wrap_socket(raw, server_hostname=args.host)
+    if args.plain:
+        conn = raw
+    else:
+        context = ssl.create_default_context(cafile=args.ca)
+        conn = context.wrap_socket(raw, server_hostname=args.host)
     auth = base64.b64encode(args.credentials.encode()).decode()
     expect = "Expect: 100-continue\r\n" if args.method == "PUT" else ""
+    if args.bitrate:
+        expect += f"Ice-Bitrate: {args.bitrate}\r\n"
     conn.sendall(
         f"{args.method} {args.mount} HTTP/1.1\r\nHost: {args.host}\r\n"
         f"Authorization: Basic {auth}\r\nContent-Type: audio/mpeg\r\n"

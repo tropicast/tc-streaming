@@ -19,6 +19,9 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    # Station limits (#8), applied with `deploy.sh apply-stations`.
+    volumes:
+      - ./stations.json:/etc/icecast/stations.json:ro
 
   caddy:
     # Caddy with the layer4 module (caddy/Dockerfile): the ingest host
@@ -55,7 +58,9 @@ services:
     command: ["python3", "-u", "/srv/server.py"]
     volumes:
       - ./auth-stub/server.py:/srv/server.py:ro
+      - ./stations.json:/etc/icecast/stations.json:ro
     environment:
+      STUB_LIMITS_FILE: /etc/icecast/stations.json
       STUB_ICECAST_USER: ${ICECAST_SOURCE_AUTH_USER:?}
       STUB_ICECAST_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD:?}
       STUB_STATIONS: ${STUB_STATIONS:-}

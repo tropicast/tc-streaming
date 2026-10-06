@@ -1,0 +1,13 @@
+{
+  "default": {
+    "max_listeners": 100
+  },
+  "stations": {
+    "42": {
+      "plan": "free",
+      "max_listeners": 100,
+      "max_bitrate_kbps": 64,
+      "formats": ["mp3", "opus"]
+    }
+  }
+}

@@ -22,6 +22,9 @@ must reject requests without these node credentials.
 | `client` | `17` | Icecast connection ID |
 | `server`, `port` | `listen.example.com`, `8000` | Node hostname and port |
 | `server-instance` | UUID | Icecast process instance |
+| `header.ice-bitrate` | `64` | Bitrate the source declares (`Ice-Bitrate`), if sent |
+| `header.ice-audio-info` | `bitrate=64;samplerate=44100;channels=2` | `Ice-Audio-Info`, if sent |
+| `header.content-type` | `audio/mpeg` | Source content type |
 
 ## Response
 
@@ -36,7 +39,11 @@ The endpoint must allow a request only when all of these hold:
 2. `user` is that station's ID.
 3. `pass` matches the station's current, unrevoked credential. Compare in
    constant time.
-4. The station's plan allows the requested format.
+4. The station's plan allows the requested format (`mp3` or `opus`, from
+   the mount).
+5. The declared bitrate (`header.ice-bitrate`, else `bitrate=` in
+   `header.ice-audio-info`) is not above the plan's limit. A source that
+   declares nothing is allowed; egress monitoring (#10) catches abuse.
 
 ## Failure behaviour
 
