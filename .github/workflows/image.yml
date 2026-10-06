@@ -67,24 +67,33 @@ jobs:
           cache-from: type=gha,scope=icecast
           cache-to: type=gha,mode=max,scope=icecast
 
+      # Unique name and a random host port: the self-hosted runner is
+      # persistent and may run other jobs.
       - name: Smoke test
         run: |
-          docker run -d --name icecast \
+          name="icecast-smoke-$GITHUB_RUN_ID"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" \
             -e ICECAST_SOURCE_PASSWORD="$(openssl rand -hex 24)" \
             -e ICECAST_ADMIN_PASSWORD="$(openssl rand -hex 24)" \
             -e ICECAST_SOURCE_AUTH_URL=http://127.0.0.1:9/unused \
             -e ICECAST_SOURCE_AUTH_USER=icecast \
             -e ICECAST_SOURCE_AUTH_PASSWORD="$(openssl rand -hex 24)" \
-            -p 127.0.0.1:8000:8000 tropicast-icecast:ci
+            -p 127.0.0.1::8000 tropicast-icecast:ci
+          port=$(docker port "$name" 8000/tcp | head -1 | cut -d: -f2)
           for _ in $(seq 1 30); do
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' icecast)" = healthy ]; then
-              curl --fail --silent --output /dev/null http://127.0.0.1:8000/status-json.xsl
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' "$name")" = healthy ]; then
+              curl --fail --silent --output /dev/null "http://127.0.0.1:$port/status-json.xsl"
               exit 0
             fi
             sleep 2
           done
-          docker logs icecast
+          docker logs "$name"
           exit 1
+
+      - name: Remove the smoke test container
+        if: always()
+        run: docker rm -f "icecast-smoke-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
 
       # Reuse the vulnerability DB for a day instead of downloading it each run.
       - id: today
