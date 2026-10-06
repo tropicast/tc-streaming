@@ -1,0 +1,140 @@
+{
+  "auth-stub/server.py": {
+    "mtime": 1791315517.092481,
+    "seen": 1791315527.8850207,
+    "ast_hash": "65401df40cec4620ebc3034a9523c61a",
+    "semantic_hash": ""
+  },
+  "deploy/ci-ssh-access.sh": {
+    "mtime": 1791153883.011893,
+    "seen": 1791315527.8850262,
+    "ast_hash": "933f55e7296548744b78449ffb5d0dae",
+    "semantic_hash": ""
+  },
+  "deploy/deploy.sh": {
+    "mtime": 1791315517.092776,
+    "seen": 1791315527.8850293,
+    "ast_hash": "30d0ac94115fd5d0fcd94406fe6fe3cf",
+    "semantic_hash": ""
+  },
+  "docker-entrypoint.py": {
+    "mtime": 1791315517.092776,
+    "seen": 1791315527.885032,
+    "ast_hash": "a8c0808344e3cbde318bc2d4fafc15bb",
+    "semantic_hash": ""
+  },
+  "tests/gateway.sh": {
+    "mtime": 1791313056.916136,
+    "seen": 1791315527.8850343,
+    "ast_hash": "58a572573e1e857d89a0a0ed90d2c931",
+    "semantic_hash": ""
+  },
+  "tests/raw_source.py": {
+    "mtime": 1791315517.093113,
+    "seen": 1791315527.8850362,
+    "ast_hash": "62a4f016a1ad6a576075f262105f8384",
+    "semantic_hash": ""
+  },
+  "tests/source-auth.sh": {
+    "mtime": 1791313056.916136,
+    "seen": 1791315527.8850386,
+    "ast_hash": "a04ff15a201119bac0f4193a47ea20e8",
+    "semantic_hash": ""
+  },
+  ".github/workflows/ansible.yml": {
+    "mtime": 1791311583.9018488,
+    "seen": 1791315527.8850405,
+    "ast_hash": "ac7806e19476192d45e9d8a6e7741f0d",
+    "semantic_hash": ""
+  },
+  ".github/workflows/caddy-image.yml": {
+    "mtime": 1791313056.9135878,
+    "seen": 1791315527.8850427,
+    "ast_hash": "f9d6006229e3a6b274981a964963f4e3",
+    "semantic_hash": ""
+  },
+  ".github/workflows/deploy-lint.yml": {
+    "mtime": 1791311583.9018488,
+    "seen": 1791315527.8850448,
+    "ast_hash": "ae30630bc91a88476d33b3135711db61",
+    "semantic_hash": ""
+  },
+  ".github/workflows/deploy.yml": {
+    "mtime": 1791315517.0921953,
+    "seen": 1791315527.8850467,
+    "ast_hash": "8cbf9acb1b94638018f4a9f35f8b90be",
+    "semantic_hash": ""
+  },
+  ".github/workflows/e2e.yml": {
+    "mtime": 1791315517.0922995,
+    "seen": 1791315527.885049,
+    "ast_hash": "c6cc6517729bd3a4dd8c9b6134faff7e",
+    "semantic_hash": ""
+  },
+  ".github/workflows/image.yml": {
+    "mtime": 1791313056.9135878,
+    "seen": 1791315527.8850596,
+    "ast_hash": "8fb556ebf7b338d44b239bf13c000b89",
+    "semantic_hash": ""
+  },
+  ".github/workflows/terraform-deploy.yml": {
+    "mtime": 1791311583.9023242,
+    "seen": 1791315527.885062,
+    "ast_hash": "742e107d260255dd7b8897249f28a41f",
+    "semantic_hash": ""
+  },
+  ".github/workflows/terraform.yml": {
+    "mtime": 1791311583.9023912,
+    "seen": 1791315527.885064,
+    "ast_hash": "e1fbdb1e633a00aca9511d53a4ee51aa",
+    "semantic_hash": ""
+  },
+  "deploy/compose.yaml": {
+    "mtime": 1791315517.0927038,
+    "seen": 1791315527.885066,
+    "ast_hash": "f483dca8e2dcaa952545fc6369035628",
+    "semantic_hash": ""
+  },
+  "infra/ansible/group_vars/all.yml": {
+    "mtime": 1791151342.3988845,
+    "seen": 1791315527.8850677,
+    "ast_hash": "42b05d5604253e46045bb81216a590a7",
+    "semantic_hash": ""
+  },
+  "infra/ansible/group_vars_example.yml": {
+    "mtime": 1791311583.9028666,
+    "seen": 1791315527.88507,
+    "ast_hash": "1a6c706288cf7f57de4fefcccfadedea",
+    "semantic_hash": ""
+  },
+  "infra/ansible/handlers/main.yml": {
+    "mtime": 1791311583.9028666,
+    "seen": 1791315527.8850722,
+    "ast_hash": "695014a05691be98800582d733740434",
+    "semantic_hash": ""
+  },
+  "infra/ansible/runner.yml": {
+    "mtime": 1791313056.916136,
+    "seen": 1791315527.8850741,
+    "ast_hash": "c628e8fd1035c99561b17d2c65cb73d1",
+    "semantic_hash": ""
+  },
+  "infra/ansible/site.yml": {
+    "mtime": 1791311583.9032173,
+    "seen": 1791315527.8850763,
+    "ast_hash": "8bda82a808579995c431e09f921b7e21",
+    "semantic_hash": ""
+  },
+  "infra/ansible/tasks/baseline.yml": {
+    "mtime": 1791311583.9032173,
+    "seen": 1791315527.885078,
+    "ast_hash": "960609197ed29c5ccda229ef1b52b105",
+    "semantic_hash": ""
+  },
+  "infra/ansible/tasks/runner-instance.yml": {
+    "mtime": 1791313056.916136,
+    "seen": 1791315527.8850806,
+    "ast_hash": "47a9d6312aad4c4c7ebdb8ffe70908a3",
+    "semantic_hash": ""
+  }
+}
