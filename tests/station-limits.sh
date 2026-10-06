@@ -16,7 +16,7 @@ work=$(mktemp -d "$PWD/.tmp-limits.XXXXXX")
 env_file=$work/env
 stations=$work/stations.json
 pids=()
-# shellcheck disable=SC2329 # called by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # called by the EXIT trap
 cleanup() {
     kill "${pids[@]}" 2>/dev/null || true
     docker compose -p "$project" --env-file "$env_file" down -v >/dev/null 2>&1
