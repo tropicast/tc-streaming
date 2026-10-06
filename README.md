@@ -35,8 +35,9 @@ tone.
 - Each station gets the mounts `/stations/{station-id}/live.mp3` and
   `/stations/{station-id}/live.opus`.
 - Limits are sized for a CX33 and its 20 TB monthly egress quota: 1500
-  clients and 50 live sources. The config file explains the numbers; the
-  load test (#12) will confirm them.
+  clients and 50 live sources. The load test (#12,
+  [docs/load-test.md](docs/load-test.md)) ran 1,400 listeners with no drops
+  at under 15% CPU; the monthly quota, not the CPU, is the limit.
 - Icecast is never exposed directly. Caddy is the only public entry point
   and the firewall keeps port 8000 closed.
 - Static file serving is off. The root page returns 404, while

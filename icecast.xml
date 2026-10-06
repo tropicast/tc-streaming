@@ -8,9 +8,10 @@
     <hostname>localhost</hostname>
 
     <!-- Sized for one Hetzner CX33 (4 vCPU, 8 GB, 20 TB/month egress).
-         20 TB/month sustained is about 62 Mbit/s: roughly 960 listeners at
-         64 kbps or 480 at 128 kbps around the clock. Peaks may go higher
-         because the quota is monthly. Revisit after the load test (#12). -->
+         Load test (#12, docs/load-test.md): 1,400 listeners with no drops
+         at under 15% CPU. The monthly quota is the real limit: about
+         1,000 concurrent Opus or 370 concurrent MP3 128 kbps listeners on
+         average around the clock. Peaks above 1,400 are untested. -->
     <limits>
         <!-- All connections: listeners, sources and admin requests. -->
         <clients>1500</clients>
