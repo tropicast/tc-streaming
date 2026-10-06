@@ -37,6 +37,12 @@ install_bundle() {
     cat "$bundle/Caddyfile" > caddy/Caddyfile
     chmod 0644 caddy/Caddyfile
     install -m 0644 "$bundle/server.py" auth-stub/server.py
+    # Monitoring files (#10); older bundles do not have them.
+    if [[ -f $bundle/icecast_exporter.py ]]; then
+        install -d -m 0750 exporter alloy
+        install -m 0644 "$bundle/icecast_exporter.py" exporter/icecast_exporter.py
+        install -m 0644 "$bundle/config.alloy" alloy/config.alloy
+    fi
     install -m 0750 "$bundle/deploy.sh" deploy.sh.new
     mv deploy.sh.new deploy.sh
 }

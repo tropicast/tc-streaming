@@ -237,3 +237,14 @@ published port, and Caddy on ports 80/443. The **Deploy** workflow
 
 [docs/runbook.md](docs/runbook.md) covers first-time setup, deploys,
 rollbacks, what restarts what, and incidents.
+
+## Monitoring
+
+`exporter/icecast_exporter.py` (station listeners and bytes, Hetzner
+monthly traffic) and Grafana Alloy (`deploy/alloy/config.alloy`) run on the
+node with the Compose profile `monitoring` and push to Grafana Cloud.
+Alert rules (`monitoring/rules.yaml`, unit-tested with
+`monitoring/rules.test.yaml`) and a dashboard (`monitoring/dashboard.json`)
+are loaded there. See
+[docs/how-to/set-up-monitoring.md](docs/how-to/set-up-monitoring.md)
+(issue #10).

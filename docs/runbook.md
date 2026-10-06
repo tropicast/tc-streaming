@@ -183,6 +183,13 @@ cd /opt/tc-streaming && docker compose logs --tail 100 icecast caddy
 export ICECAST_IMAGE_TAG=$(cut -d' ' -f2 /opt/tc-streaming/CURRENT)
 ```
 
+## Monitoring
+
+Grafana Cloud collects node and station metrics and sends the alerts in
+`monitoring/rules.yaml`. Setup:
+[how-to/set-up-monitoring.md](how-to/set-up-monitoring.md). The exporter
+and Alloy run on the node with the Compose profile `monitoring`.
+
 ## Incidents
 
 ### Node is down or destroyed

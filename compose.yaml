@@ -53,6 +53,40 @@ services:
       STUB_ICECAST_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD}
       STUB_STATIONS: ${STUB_STATIONS:-}
 
+  # Monitoring (#10), enabled with COMPOSE_PROFILES=monitoring.
+  # Reads Icecast's admin stats and the Hetzner traffic counters.
+  icecast-exporter:
+    profiles: ["monitoring"]
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: ["python3", "-u", "/srv/icecast_exporter.py"]
+    volumes:
+      - ./exporter/icecast_exporter.py:/srv/icecast_exporter.py:ro
+    environment:
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:-}
+      HCLOUD_READ_TOKEN: ${HCLOUD_READ_TOKEN:-}
+      HCLOUD_SERVER_NAME: ${NODE_NAME:-}
+
+  # Ships host and Icecast metrics to Grafana Cloud.
+  alloy:
+    profiles: ["monitoring"]
+    image: grafana/alloy:v1.20.1
+    restart: unless-stopped
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    pid: host
+    volumes:
+      - ./deploy/alloy:/etc/alloy:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      - alloy-data:/var/lib/alloy/data
+    environment:
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:-}
+      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:-}
+      GRAFANA_CLOUD_TOKEN: ${GRAFANA_CLOUD_TOKEN:-}
+      NODE_NAME: ${NODE_NAME:-local}
+
 volumes:
   caddy-data:
   caddy-config:
+  alloy-data:
