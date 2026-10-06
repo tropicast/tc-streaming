@@ -33,7 +33,10 @@ RUN curl -fsSL --retry 3 \
 
 FROM debian:bookworm-slim
 
+# upgrade: pick up Debian security fixes newer than the base image (the CI
+# Trivy scan fails on fixable critical CVEs).
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl python3 \
         libcurl4 libogg0 librhash0 libssl3 libvorbis0a libxml2 libxslt1.1 \
