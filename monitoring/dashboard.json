@@ -284,7 +284,8 @@
             "stacking": {
               "mode": "normal"
             }
-          }
+          },
+          "noValue": "No station on air"
         },
         "overrides": []
       },
@@ -296,7 +297,8 @@
         "tooltip": {
           "mode": "multi"
         }
-      }
+      },
+      "description": "Stations appear only while their source is connected."
     },
     {
       "id": 6,
@@ -331,7 +333,8 @@
             "stacking": {
               "mode": "normal"
             }
-          }
+          },
+          "noValue": "No station on air"
         },
         "overrides": []
       },
@@ -343,7 +346,8 @@
         "tooltip": {
           "mode": "multi"
         }
-      }
+      },
+      "description": "Stations appear only while their source is connected."
     },
     {
       "id": 7,
