@@ -5,12 +5,14 @@
 #   deploy.sh rollback
 #   deploy.sh status
 #   deploy.sh compose <args>   docker compose with the active release's tags
+#   deploy.sh apply-stations < stations.json   (station limits, no restart)
 #
 # Layout under $DEPLOY_ROOT (default /opt/tc-streaming):
 #   .env                 secrets, written by the deploy workflow (0600)
 #   compose.yaml         active Compose file
 #   caddy/Caddyfile      active Caddy config (directory-mounted)
 #   auth-stub/server.py  temporary auth stub (profile "stub")
+#   stations.json        station limits (#8), from the control plane
 #   releases/<sha>/      copy of each deployed bundle, for rollback; its
 #                        release.env holds ICECAST_IMAGE_TAG and CADDY_IMAGE_TAG
 #   CURRENT, PREVIOUS    "<git-sha> <icecast-image-tag>" of the active and
@@ -88,8 +90,14 @@ start() {
     local caddy_before="" caddy_after=""
     caddy_before=$(caddy_started_at)
 
+    # Bind-mounted into Icecast: it must exist before the container starts.
+    [[ -f stations.json ]] || printf '{}\n' > stations.json
+
     log "starting services"
     compose up -d --wait --remove-orphans
+
+    # Icecast may not have restarted; make it use the current limits.
+    reload_stations
 
     # A Caddy container that this deploy started already runs the new
     # Caddyfile. Reloading it right away would interrupt its first
@@ -108,6 +116,18 @@ start() {
     else
         log "caddy started with the new config"
     fi
+}
+
+# Re-render the per-station mounts and reload Icecast (SIGHUP): live
+# listeners and sources stay connected.
+reload_stations() {
+    # Images before #8 ignore the argument and would start a second Icecast.
+    if ! compose exec -T icecast grep -q reload-stations /usr/local/bin/docker-entrypoint.py; then
+        log "this Icecast image has no station limits; skipping"
+        return 0
+    fi
+    log "applying station limits"
+    compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.py reload-stations
 }
 
 caddy_started_at() {
@@ -168,6 +188,21 @@ compose)
     fi
     shift
     compose "$@"
+    ;;
+apply-stations)
+    # Validate before touching the live file; overwrite in place so the
+    # bind mount sees the change.
+    new=$(mktemp)
+    cat > "$new"
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$new" ||
+        { log "stations JSON is invalid"; rm -f "$new"; exit 1; }
+    cat "$new" > stations.json
+    rm -f "$new"
+    if [[ -f CURRENT ]]; then
+        read -r sha image_tag < CURRENT
+        load_release "$sha" "$image_tag"
+    fi
+    reload_stations
     ;;
 status)
     echo "current:  $(cat CURRENT 2>/dev/null || echo none)"

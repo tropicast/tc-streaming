@@ -6,6 +6,7 @@ Never deploy it: credentials come from an environment variable.
 
 import base64
 import hmac
+import json
 import os
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,24 @@ def load_stations():
 
 
 STATIONS = load_stations()
+
+
+def load_limits():
+    """Station plans from the same stations.json Icecast uses (#8)."""
+    path = os.environ.get("STUB_LIMITS_FILE", "")
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path) as handle:
+        return json.load(handle).get("stations", {})
+
+
+def declared_kbps(fields):
+    """Bitrate the source declares (Ice-Bitrate, else Ice-Audio-Info)."""
+    value = fields.get("header.ice-bitrate", "")
+    if not value:
+        match = re.search(r"(?:^|;)\s*(?:ice-)?bitrate=(\d+)", fields.get("header.ice-audio-info", ""))
+        value = match.group(1) if match else ""
+    return int(value) if value.isdigit() else None
 EXPECTED_AUTH = "Basic " + base64.b64encode(
     f"{os.environ['STUB_ICECAST_USER']}:{os.environ['STUB_ICECAST_PASSWORD']}".encode()
 ).decode()
@@ -40,6 +59,14 @@ def allowed(fields):
         return False, "unknown station or wrong user"
     if not hmac.compare_digest(fields.get("pass", ""), secret):
         return False, "wrong password"
+    limits = load_limits().get(station)
+    if limits:
+        if match.group(2) not in limits.get("formats", ["mp3", "opus"]):
+            return False, f"format {match.group(2)} not in the station's plan"
+        kbps = declared_kbps(fields)
+        cap = limits.get("max_bitrate_kbps")
+        if cap and kbps and kbps > cap:
+            return False, f"bitrate {kbps} kbps above the plan's {cap} kbps"
     return True, ""
 
 

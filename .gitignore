@@ -8,3 +8,4 @@ __pycache__/
 backend.hcl
 infra/ansible/inventory.ini
 infra/ansible/group_vars/
+.tmp-limits.*/

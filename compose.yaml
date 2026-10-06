@@ -19,6 +19,9 @@ services:
         hard: 65536
     ports:
       - "127.0.0.1:${ICECAST_PORT:-8000}:8000"
+    # Station limits (#8); STATIONS_JSON points tests at their own file.
+    volumes:
+      - ${STATIONS_JSON:-./deploy/stations.example.json}:/etc/icecast/stations.json:ro
 
   caddy:
     build: ./caddy
@@ -48,7 +51,9 @@ services:
     command: ["python3", "-u", "/srv/server.py"]
     volumes:
       - ./auth-stub/server.py:/srv/server.py:ro
+      - ${STATIONS_JSON:-./deploy/stations.example.json}:/etc/icecast/stations.json:ro
     environment:
+      STUB_LIMITS_FILE: /etc/icecast/stations.json
       STUB_ICECAST_USER: ${ICECAST_SOURCE_AUTH_USER}
       STUB_ICECAST_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD}
       STUB_STATIONS: ${STUB_STATIONS:-}

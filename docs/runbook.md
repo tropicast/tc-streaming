@@ -187,6 +187,21 @@ Grafana Cloud collects node and station metrics and sends the alerts in
 [how-to/set-up-monitoring.md](how-to/set-up-monitoring.md). The exporter
 and Alloy run on the node with the Compose profile `monitoring`.
 
+## Change station limits
+
+Station caps, formats and bitrates live in `/opt/tc-streaming/stations.json`
+(see README, *Station limits*). Until the control plane pushes them, they
+come from the repository variable `STATION_LIMITS` (JSON) on every deploy.
+Applying them never restarts Icecast.
+
+```sh
+gh variable set STATION_LIMITS < stations.json   # then deploy, or on the node:
+ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4> /opt/tc-streaming/deploy.sh apply-stations < stations.json
+```
+
+Lowering a cap does not disconnect listeners already connected; it only
+refuses new ones above the cap.
+
 ## Incidents
 
 ### Node is down or destroyed

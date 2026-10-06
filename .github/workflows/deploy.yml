@@ -150,6 +150,15 @@ jobs:
             printf '%s=%s\n' "$name" "${!name}"
           done | ssh node "umask 077 && cat > $REMOTE_ROOT/.env.new && mv $REMOTE_ROOT/.env.new $REMOTE_ROOT/.env"
 
+      # Station limits (#8) until the control plane pushes them itself.
+      # Applied by deploy.sh with a reload, never a restart.
+      - name: Write station limits to the node
+        env:
+          STATION_LIMITS: ${{ vars.STATION_LIMITS || '{}' }}
+        run: |
+          printf '%s\n' "$STATION_LIMITS" | python3 -m json.tool >/dev/null
+          printf '%s\n' "$STATION_LIMITS" | ssh node "cat > $REMOTE_ROOT/stations.json"
+
       - name: Upload the release bundle
         env:
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}

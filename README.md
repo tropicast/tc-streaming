@@ -50,6 +50,37 @@ tone.
 - Compose raises the container's open-file limit to 65536, because each
   listener holds one file descriptor.
 
+### Station limits
+
+Each station gets its own Icecast mounts with a listener cap (issue #8).
+`stations.json` holds the desired state, from the control plane:
+
+```json
+{
+  "default": {"max_listeners": 100},
+  "stations": {
+    "42": {"plan": "free", "max_listeners": 100, "max_bitrate_kbps": 64, "formats": ["mp3", "opus"]}
+  }
+}
+```
+
+- `max_listeners`: a listener above the cap gets `503`. Stations without an
+  entry use `default.max_listeners` (the free-tier cap).
+- `formats` and `max_bitrate_kbps` are checked by the source auth endpoint
+  when a station connects, using the bitrate the source declares
+  (`Ice-Bitrate` / `Ice-Audio-Info`). See `docs/source-auth.md`.
+- The entrypoint renders one `<mount>` per station and format, with a copy
+  of the source authentication. `docker-entrypoint.py reload-stations`
+  re-renders them and reloads Icecast with `SIGHUP`: live listeners and
+  sources stay connected.
+- Capacity planning (which station goes on which node, refusing a full
+  node) stays in the control plane; this repository only applies the
+  limits. Icecast's global `<sources>` limit (50) is the hard ceiling.
+
+Locally, Compose mounts `deploy/stations.example.json` (override with
+`STATIONS_JSON`). `tests/station-limits.sh` checks caps, the default cap,
+plan formats and bitrates, and a reload that keeps listeners.
+
 ### Source authentication
 
 Broadcasters never use a shared password (issue #7). Each publish to
