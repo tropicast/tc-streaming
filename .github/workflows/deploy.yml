@@ -190,9 +190,23 @@ jobs:
             echo "FAIL $url -> $code (expected $expected)" >&2
             return 1
           }
+          # The ingest host passes only PUT/SOURCE to Icecast and closes any
+          # other connection (#6). A valid TLS handshake followed by a closed
+          # connection is curl exit 52; certificate or TLS errors exit 35/60.
+          check_ingest() {
+            local url=$1 status
+            for _ in $(seq 1 24); do
+              status=0
+              curl -sS -o /dev/null --max-time 5 "$url" 2>/dev/null || status=$?
+              [[ $status == 52 ]] && { echo "ok   $url -> TLS ok, connection closed"; return 0; }
+              sleep 5
+            done
+            echo "FAIL $url -> curl exit $status (expected 52: TLS ok, connection closed)" >&2
+            return 1
+          }
           check "https://$LISTEN_HOST/admin/stats.xml" 404
           check "https://$LISTEN_HOST/status-json.xsl" 404
-          check "https://$INGEST_HOST/stations/0/live.mp3" 404
+          check_ingest "https://$INGEST_HOST/stations/0/live.mp3"
 
       - name: Close SSH for this runner
         if: always()
