@@ -1,0 +1,23 @@
+# Handlers used by tasks/baseline.yml and the playbooks.
+- name: Reload sshd
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
+
+- name: Restart fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted
+
+- name: Apply sysctl
+  ansible.builtin.command: sysctl --system
+  changed_when: true
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reexec: true
+
+- name: Restart docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted

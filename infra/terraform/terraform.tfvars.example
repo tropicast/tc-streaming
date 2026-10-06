@@ -11,3 +11,7 @@ admin_cidrs = ["203.0.113.10/32"]
 
 # Existing Hetzner DNS zone; leave null to manage DNS elsewhere.
 dns_zone = null
+
+# Optional: self-hosted CI runner (defaults shown).
+# runner_name        = "tc-runner-1"
+# runner_server_type = "cx33"

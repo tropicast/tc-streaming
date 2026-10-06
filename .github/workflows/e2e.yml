@@ -31,7 +31,9 @@ concurrency:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +57,9 @@ jobs:
           cache-from: type=gha,scope=caddy
           cache-to: type=gha,mode=max,scope=caddy
 
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Preinstalled on the self-hosted runner.
+      - name: Install ffmpeg
+        run: command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg; }
 
       - name: Source auth
         run: tests/source-auth.sh
