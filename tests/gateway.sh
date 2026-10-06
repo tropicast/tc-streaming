@@ -109,6 +109,24 @@ for method in PUT SOURCE; do
     wait
 done
 
+# Opus (#9): an Ogg Opus source on the .opus mount reaches listeners as
+# audio/ogg and decodes as Opus.
+opus_tone() {
+    timeout "$1" ffmpeg -nostdin -loglevel error -re -f lavfi -i sine -ac 2 \
+        -c:a libopus -b:a 64k -f ogg - 2>/dev/null
+}
+opus_tone 10 | python3 tests/raw_source.py ingest.localhost "$https_port" \
+    /stations/42/live.opus "42:$secret" --ca "$ca" --connect 127.0.0.1 \
+    --content-type audio/ogg --bitrate 64 >/dev/null || true &
+sleep 3
+curl -s -D "$work/opus.headers" -o "$work/opus.ogg" -m 5 --cacert "$ca" "${pin[@]}" \
+    "$listen/stations/42/live.opus" || true
+check "Opus mount is served as audio/ogg" yes \
+    "$(grep -qi '^content-type: audio/ogg' "$work/opus.headers" && echo yes || echo no)"
+check "Opus stream decodes as opus" opus \
+    "$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$work/opus.ogg" 2>/dev/null || echo none)"
+wait
+
 publish_chunked "42:$secret" 8 >/dev/null &
 sleep 3
 bytes=$(listen_bytes)
