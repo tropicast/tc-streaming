@@ -4,6 +4,7 @@
 #   deploy.sh activate <bundle-dir> <git-sha>
 #   deploy.sh rollback
 #   deploy.sh status
+#   deploy.sh compose <args>   docker compose with the active release's tags
 #
 # Layout under $DEPLOY_ROOT (default /opt/tc-streaming):
 #   .env                 secrets, written by the deploy workflow (0600)
@@ -37,6 +38,12 @@ install_bundle() {
     cat "$bundle/Caddyfile" > caddy/Caddyfile
     chmod 0644 caddy/Caddyfile
     install -m 0644 "$bundle/server.py" auth-stub/server.py
+    # Monitoring files (#10); older bundles do not have them.
+    if [[ -f $bundle/icecast_exporter.py ]]; then
+        install -d -m 0750 exporter alloy
+        install -m 0644 "$bundle/icecast_exporter.py" exporter/icecast_exporter.py
+        install -m 0644 "$bundle/config.alloy" alloy/config.alloy
+    fi
     install -m 0750 "$bundle/deploy.sh" deploy.sh.new
     mv deploy.sh.new deploy.sh
 }
@@ -153,6 +160,14 @@ rollback)
     SKIP_PULL=${SKIP_PULL:-1} start
     record "$sha" "$ICECAST_IMAGE_TAG"
     log "active: $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
+    ;;
+compose)
+    if [[ -f CURRENT ]]; then
+        read -r sha image_tag < CURRENT
+        load_release "$sha" "$image_tag"
+    fi
+    shift
+    compose "$@"
     ;;
 status)
     echo "current:  $(cat CURRENT 2>/dev/null || echo none)"

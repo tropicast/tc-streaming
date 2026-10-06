@@ -1,0 +1,91 @@
+# promtool test rules monitoring/rules.test.yaml
+rule_files:
+  - rules.yaml
+evaluation_interval: 15s
+
+tests:
+  - name: Icecast stops answering
+    interval: 15s
+    input_series:
+      - series: icecast_up{instance="tc-stream-1",job="icecast"}
+        values: 1 1 1 1 0 0 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 1m15s
+        alertname: IcecastDown
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: IcecastDown
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: tc-stream-1, job: icecast}
+            exp_annotations:
+              summary: Icecast on tc-stream-1 does not answer.
+              description: Listeners and broadcasters are disconnected. See docs/runbook.md.
+
+  - name: Node stops sending metrics
+    interval: 30s
+    input_series:
+      - series: up{instance="tc-stream-1",job="node"}
+        values: 1 1 1 1 _ _ _ _ _ _ _ _
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StreamingNodeDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: StreamingNodeDown
+        exp_alerts:
+          # absent_over_time keeps only the labels in its selector.
+          - exp_labels: {severity: critical, job: node}
+            exp_annotations:
+              summary: No metrics from the streaming node for 2 minutes.
+              description: The node, Docker or the alloy container is down. Check the Hetzner Console, then `docker compose ps` on the node.
+
+  - name: Egress crosses 70% then 90%
+    interval: 5m
+    input_series:
+      - series: hetzner_server_outgoing_traffic_bytes{server="tc-stream-1"}
+        values: 10e12 15e12 19e12
+      - series: hetzner_server_included_traffic_bytes{server="tc-stream-1"}
+        values: 20e12 20e12 20e12
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: EgressQuota70Percent
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: EgressQuota70Percent
+        exp_alerts:
+          - exp_labels: {severity: warning, server: tc-stream-1}
+            exp_annotations:
+              summary: tc-stream-1 used 75% of its included traffic this month.
+              description: Plan a second node or lower default bitrates (docs/runbook.md, egress).
+      - eval_time: 5m
+        alertname: EgressQuota90Percent
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: EgressQuota90Percent
+        exp_alerts:
+          - exp_labels: {severity: critical, server: tc-stream-1}
+            exp_annotations:
+              summary: tc-stream-1 used 95% of its included traffic this month.
+              description: Above 100%, Hetzner bills extra traffic (about $1.12/TB).
+
+  - name: A live station drops
+    interval: 1m
+    input_series:
+      - series: icecast_mount_up{instance="tc-stream-1",job="icecast",mount="/stations/42/live.mp3",station="42",format="mp3"}
+        # A source that disconnects disappears from the scrape: Prometheus
+        # writes a stale marker.
+        values: 1 1 1 stale
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StationSourceDropped
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: StationSourceDropped
+        exp_alerts:
+          - exp_labels: {severity: info, instance: tc-stream-1, job: icecast, mount: /stations/42/live.mp3, station: "42", format: mp3}
+            exp_annotations:
+              summary: Station 42 stopped broadcasting (/stations/42/live.mp3).
+              description: Expected if the station went off air; otherwise check its connection.
+      - eval_time: 14m
+        alertname: StationSourceDropped
+        exp_alerts: []

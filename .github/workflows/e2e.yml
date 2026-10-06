@@ -1,6 +1,6 @@
 name: E2E
 
-# Source auth (#7) and gateway (#6) end-to-end tests in one job: ffmpeg is
+# Source auth (#7), gateway (#6) and monitoring (#10) end-to-end tests in one job: ffmpeg is
 # installed once and both images are built once, from the same GHA cache as
 # image.yml and caddy-image.yml. Image tags, Compose projects and ports are
 # unique per run, so parallel jobs on one runner do not collide.
@@ -15,6 +15,9 @@ on:
       - compose.yaml
       - auth-stub/**
       - tests/**
+      - exporter/**
+      - deploy/alloy/**
+      - monitoring/**
       - .github/workflows/e2e.yml
   push:
     branches: [main]
@@ -79,6 +82,19 @@ jobs:
 
       - name: Gateway
         run: tests/gateway.sh
+        env:
+          E2E_PREBUILT: "1"
+          TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          ICECAST_IMAGE: tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          CADDY_IMAGE: tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Alert rule unit tests
+        run: |
+          docker run --rm -v "$PWD/monitoring:/m:ro" -w /m --entrypoint promtool \
+            prom/prometheus:v3.15.0 test rules rules.test.yaml
+
+      - name: Monitoring
+        run: tests/monitoring.sh
         env:
           E2E_PREBUILT: "1"
           TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}

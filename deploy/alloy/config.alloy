@@ -1,0 +1,63 @@
+// Grafana Alloy on the streaming node (#10): host and Icecast metrics,
+// pushed to Grafana Cloud (Prometheus remote write).
+// Environment: GRAFANA_CLOUD_PROM_URL, GRAFANA_CLOUD_PROM_USER,
+// GRAFANA_CLOUD_TOKEN, NODE_NAME.
+
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  // Keep the series count well inside the Grafana Cloud free tier.
+  disable_collectors = ["arp", "bcache", "bonding", "btrfs", "edac", "fibrechannel", "infiniband", "ipvs", "mdadm", "nfs", "nfsd", "nvme", "powersupplyclass", "rapl", "schedstat", "softnet", "tapestats", "thermal_zone", "udp_queues", "xfs", "zfs"]
+
+  filesystem {
+    mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+)($|/)"
+  }
+}
+
+// The unix exporter labels its targets job="integrations/unix"; the alert
+// rules and dashboard use job="node".
+discovery.relabel "host" {
+  targets = prometheus.exporter.unix.host.targets
+
+  rule {
+    target_label = "job"
+    replacement  = "node"
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = discovery.relabel.host.output
+  job_name        = "node"
+  scrape_interval = "30s"
+  forward_to      = [prometheus.relabel.instance.receiver]
+}
+
+prometheus.scrape "icecast" {
+  targets         = [{"__address__" = "icecast-exporter:9100"}]
+  job_name        = "icecast"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.relabel.instance.receiver]
+}
+
+// One stable instance label per node, whatever the scrape target was.
+prometheus.relabel "instance" {
+  forward_to = [prometheus.remote_write.cloud.receiver]
+
+  rule {
+    target_label = "instance"
+    replacement  = sys.env("NODE_NAME")
+  }
+}
+
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}

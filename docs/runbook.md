@@ -174,14 +174,18 @@ it in GitHub first.
 ```sh
 ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4>
 /opt/tc-streaming/deploy.sh status
-cd /opt/tc-streaming && docker compose logs --tail 100 icecast caddy
+/opt/tc-streaming/deploy.sh compose logs --tail 100 icecast caddy
 ```
 
-`docker compose` needs `ICECAST_IMAGE_TAG` set; take it from `CURRENT`:
+Plain `docker compose` fails on the node without the release's image tags;
+`deploy.sh compose …` loads them and passes the rest to `docker compose`.
 
-```sh
-export ICECAST_IMAGE_TAG=$(cut -d' ' -f2 /opt/tc-streaming/CURRENT)
-```
+## Monitoring
+
+Grafana Cloud collects node and station metrics and sends the alerts in
+`monitoring/rules.yaml`. Setup:
+[how-to/set-up-monitoring.md](how-to/set-up-monitoring.md). The exporter
+and Alloy run on the node with the Compose profile `monitoring`.
 
 ## Incidents
 
@@ -208,7 +212,7 @@ errors.
 - Both hostnames must resolve to the node (`dig @1.1.1.1`).
 - Port 80 must be reachable for the ACME HTTP challenge (Hetzner firewall).
 - Cloudflare records must be **DNS only**.
-- Check `docker compose logs caddy | grep -i acme`.
+- Check `/opt/tc-streaming/deploy.sh compose logs caddy | grep -i acme`.
 
 ### Broadcasters are all rejected
 

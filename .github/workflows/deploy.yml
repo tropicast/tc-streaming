@@ -124,6 +124,11 @@ jobs:
           ICECAST_RELAY_PASSWORD: ${{ secrets.ICECAST_RELAY_PASSWORD }}
           ICECAST_SOURCE_AUTH_PASSWORD: ${{ secrets.ICECAST_SOURCE_AUTH_PASSWORD }}
           STUB_STATIONS: ${{ secrets.STUB_STATIONS }}
+          GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+          HCLOUD_READ_TOKEN: ${{ secrets.HCLOUD_READ_TOKEN }}
+          GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
+          GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
+          NODE_NAME: ${{ vars.DEPLOY_SERVER || 'tc-stream-1' }}
           ICECAST_SOURCE_AUTH_URL: ${{ vars.ICECAST_SOURCE_AUTH_URL }}
           ICECAST_SOURCE_AUTH_USER: ${{ vars.ICECAST_SOURCE_AUTH_USER || 'icecast' }}
           LISTEN_HOST: ${{ vars.LISTEN_HOST }}
@@ -137,7 +142,9 @@ jobs:
           for name in "${required[@]}"; do
             [[ -n ${!name} ]] || { echo "Missing secret or variable: $name" >&2; exit 1; }
           done
-          names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS)
+          names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS
+                 GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_TOKEN
+                 HCLOUD_READ_TOKEN NODE_NAME)
           # Sent over stdin, never on a command line.
           for name in "${names[@]}"; do
             printf '%s=%s\n' "$name" "${!name}"
@@ -149,7 +156,8 @@ jobs:
           CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
         run: |
           bundle=$(mktemp -d)
-          cp deploy/compose.yaml deploy/deploy.sh caddy/Caddyfile auth-stub/server.py "$bundle/"
+          cp deploy/compose.yaml deploy/deploy.sh caddy/Caddyfile auth-stub/server.py \
+            exporter/icecast_exporter.py deploy/alloy/config.alloy "$bundle/"
           printf 'ICECAST_IMAGE_TAG=%s\nCADDY_IMAGE_TAG=%s\n' "$IMAGE_TAG" "$CADDY_TAG" > "$bundle/release.env"
           tar -C "$bundle" -cz . |
             ssh node "rm -rf $REMOTE_ROOT/incoming && install -d -m 0750 $REMOTE_ROOT/incoming && tar -xz -C $REMOTE_ROOT/incoming"

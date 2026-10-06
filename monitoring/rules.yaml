@@ -1,0 +1,94 @@
+# Alert rules for the streaming node (#10), Prometheus format.
+# Load into Grafana Cloud with mimirtool (docs/how-to/set-up-monitoring.md).
+# Unit tests: monitoring/rules.test.yaml (promtool test rules).
+groups:
+  - name: tropicast-streaming
+    rules:
+      # Alloy pushes `up` for every scrape; no data at all means the node,
+      # Docker or Alloy is down.
+      - alert: StreamingNodeDown
+        expr: absent_over_time(up{job="node"}[2m])
+        labels:
+          severity: critical
+        annotations:
+          summary: No metrics from the streaming node for 2 minutes.
+          description: The node, Docker or the alloy container is down. Check the Hetzner Console, then `docker compose ps` on the node.
+
+      - alert: IcecastDown
+        expr: icecast_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Icecast on {{ $labels.instance }} does not answer.
+          description: Listeners and broadcasters are disconnected. See docs/runbook.md.
+
+      - alert: IcecastExporterDown
+        expr: up{job="icecast"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: The Icecast exporter on {{ $labels.instance }} is down.
+          description: Station metrics are missing; streaming may still work.
+
+      # A station whose source was live in the last 10 minutes and is gone
+      # now. Also fires when a station stops on purpose, hence "info".
+      - alert: StationSourceDropped
+        expr: max_over_time(icecast_mount_up[10m]) unless icecast_mount_up
+        labels:
+          severity: info
+        annotations:
+          summary: Station {{ $labels.station }} stopped broadcasting ({{ $labels.mount }}).
+          description: Expected if the station went off air; otherwise check its connection.
+
+      - alert: EgressQuota70Percent
+        expr: hetzner_server_outgoing_traffic_bytes / hetzner_server_included_traffic_bytes > 0.7
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.server }} used {{ $value | humanizePercentage }} of its included traffic this month."
+          description: Plan a second node or lower default bitrates (docs/runbook.md, egress).
+
+      - alert: EgressQuota90Percent
+        expr: hetzner_server_outgoing_traffic_bytes / hetzner_server_included_traffic_bytes > 0.9
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.server }} used {{ $value | humanizePercentage }} of its included traffic this month."
+          description: Above 100%, Hetzner bills extra traffic (about $1.12/TB).
+
+      - alert: HetznerTrafficUnknown
+        expr: hetzner_up == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The exporter cannot read traffic from the Hetzner API.
+          description: Egress alerts are blind. Check HCLOUD_READ_TOKEN.
+
+      - alert: NodeDiskAlmostFull
+        expr: |
+          1 - node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay"}
+            / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay"} > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }} is {{ $value | humanizePercentage }} full."
+
+      - alert: NodeMemoryLow
+        expr: node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"} < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Less than 10% memory available on {{ $labels.instance }}.
+
+      - alert: NodeCpuBusy
+        expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{job="node",mode="idle"}[5m])) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: CPU above 90% for 15 minutes on {{ $labels.instance }}.
