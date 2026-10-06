@@ -1,0 +1,11 @@
+# .graphifyignore: graphify indexes only the code and scripts below.
+*
+!*/
+!docker-entrypoint.py
+!auth-stub/**
+!exporter/**
+!deploy/**
+!tests/**
+!infra/ansible/**
+!infra/terraform/*.tf
+!.github/workflows/**
