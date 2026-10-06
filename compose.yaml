@@ -1,7 +1,8 @@
 services:
   icecast:
     build: .
-    image: tropicast-icecast:local
+    # ICECAST_IMAGE / CADDY_IMAGE let CI test a per-run image tag.
+    image: ${ICECAST_IMAGE:-tropicast-icecast:local}
     env_file:
       - path: .env
         required: false
@@ -21,7 +22,7 @@ services:
 
   caddy:
     build: ./caddy
-    image: tropicast-caddy:local
+    image: ${CADDY_IMAGE:-tropicast-caddy:local}
     restart: unless-stopped
     depends_on:
       icecast:

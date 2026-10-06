@@ -7,9 +7,15 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-https_port=${TEST_HTTPS_PORT:-18443}
-http_port=${TEST_HTTP_PORT:-18080}
-project=tcs-gateway-test
+# Parallel-safe on a shared Docker host: a unique Compose project per run
+# and free host ports unless TEST_* ports are given.
+free_port() {
+    python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+run_id=${TEST_RUN_ID:-$$}
+https_port=${TEST_HTTPS_PORT:-$(free_port)}
+http_port=${TEST_HTTP_PORT:-$(free_port)}
+project=tcs-gateway-$run_id
 work=$(mktemp -d)
 env_file=$work/env
 ca=$work/root.crt
@@ -21,7 +27,7 @@ ICECAST_SOURCE_PASSWORD=$(openssl rand -hex 24)
 ICECAST_ADMIN_PASSWORD=$(openssl rand -hex 24)
 ICECAST_SOURCE_AUTH_USER=icecast
 ICECAST_SOURCE_AUTH_PASSWORD=$(openssl rand -hex 24)
-ICECAST_PORT=${TEST_ICECAST_PORT:-18000}
+ICECAST_PORT=${TEST_ICECAST_PORT:-$(free_port)}
 STUB_STATIONS=42:$secret
 LISTEN_HOST=listen.localhost
 INGEST_HOST=ingest.localhost

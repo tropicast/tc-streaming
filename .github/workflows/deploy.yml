@@ -28,6 +28,13 @@ jobs:
       DEPLOY_SERVER: ${{ vars.DEPLOY_SERVER || 'tc-stream-1' }}
       REMOTE_ROOT: /opt/tc-streaming
     steps:
+      # Per-job Docker config: parallel jobs on the self-hosted runner must
+      # not share registry logins or buildx state.
+      - name: Isolate the Docker config
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
+
       - name: Allow only main
         if: github.ref != 'refs/heads/main'
         run: |

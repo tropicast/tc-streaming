@@ -4,8 +4,14 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-port=${TEST_PORT:-18000}
-project=tcs-source-auth-test
+# Parallel-safe on a shared Docker host: a unique Compose project per run
+# and free host ports unless TEST_* ports are given.
+free_port() {
+    python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+run_id=${TEST_RUN_ID:-$$}
+port=${TEST_PORT:-$(free_port)}
+project=tcs-source-auth-$run_id
 env_file=$(mktemp)
 trap 'docker compose -p "$project" --env-file "$env_file" down -v >/dev/null 2>&1; rm -f "$env_file"' EXIT
 
