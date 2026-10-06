@@ -174,14 +174,14 @@ If a query returns nothing, see *Troubleshooting* below.
 Goal: Grafana watches the metrics and raises the alerts listed in
 *What the alerts mean* below.
 
-The rules address is value **A** with the final `/push` removed, so it
-ends in `/api/prom`. The commands below build it from the stored variable;
-you only type token **D**. Run them from the `tc-streaming` folder:
+The rules address is only the host part of value **A** (everything before
+`/api/prom/push`), so it ends in `.grafana.net`. The commands below build
+it from the stored variable; you only type token **D**. Run them from the `tc-streaming` folder:
 
 ```sh
-rules_url=$(gh variable get GRAFANA_CLOUD_PROM_URL); rules_url=${rules_url%/push}
+rules_url=$(gh variable get GRAFANA_CLOUD_PROM_URL); rules_url=${rules_url%/api/prom/push}
 rules_user=$(gh variable get GRAFANA_CLOUD_PROM_USER)
-echo "$rules_url"                       # must end in /api/prom
+echo "$rules_url"                       # must end in .grafana.net
 read -rsp 'Token D (Grafana, rules): ' rules_key; echo
 docker run --rm -v "$PWD/monitoring:/m:ro" \
   -e MIMIR_ADDRESS="$rules_url" -e MIMIR_TENANT_ID="$rules_user" -e MIMIR_API_KEY="$rules_key" \
@@ -282,7 +282,7 @@ tags; plain `docker compose` on the node fails without them.
 | `icecast_up` is `0` | Exporter cannot read Icecast's statistics | Usually a wrong admin password after a secret change: deploy again |
 | `hetzner_up` is `0` | `HCLOUD_READ_TOKEN` holds a Grafana token, a wrong token, or one from another Hetzner project | Create token E (step 3), run step 4 again, deploy |
 | `rules load` returns `401` | Token D wrong or without `rules: Write` | Create a new token for `tc-rules` |
-| `rules load`: `requested resource not found`, URL contains `/push/prometheus/...` | The address still ends in `/push` | Use the step 6 commands: the address must end in `/api/prom` |
+| `rules load`: `requested resource not found` | The address contains `/api/prom` or `/push` | Use the step 6 commands: the address is only the host, ending in `.grafana.net` |
 | Rules loaded but no email | No contact point on the notification policy | Step 7 |
 
 ## For later
