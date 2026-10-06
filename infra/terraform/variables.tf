@@ -67,3 +67,15 @@ variable "dns_ttl" {
   type        = number
   default     = 300
 }
+
+variable "runner_name" {
+  description = "Name of the self-hosted GitHub Actions runner server."
+  type        = string
+  default     = "tc-runner-1"
+}
+
+variable "runner_server_type" {
+  description = "Hetzner server type for the CI runner. CX33: 4 vCPU, 8 GB RAM."
+  type        = string
+  default     = "cx33"
+}

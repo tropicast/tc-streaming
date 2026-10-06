@@ -1,0 +1,181 @@
+# Shared host baseline for the streaming node (site.yml) and the CI runner
+# (runner.yml). Expects:
+#   ops_ssh_keys       admin public keys (user ops, sudo)
+#   ssh_allow_users    users allowed to log in over SSH
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - fail2ban
+      - gnupg
+      - python3-debian
+      # fail2ban needs it for backend = systemd (Debian 12 has no auth.log).
+      - python3-systemd
+      - sudo
+      - systemd-timesyncd
+      - unattended-upgrades
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- Time ---
+- name: Check the time zone
+  ansible.builtin.command: timedatectl show --property=Timezone --value
+  register: timezone
+  changed_when: false
+
+- name: Set the time zone to UTC
+  ansible.builtin.command: timedatectl set-timezone UTC
+  when: timezone.stdout != "UTC"
+  changed_when: true
+
+- name: Enable NTP time sync
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
+
+# --- Security updates ---
+- name: Enable unattended security upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+# A reboot drops every listener, so never reboot automatically.
+# Reboot by hand in the maintenance window (see README).
+- name: Never reboot automatically after upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52tropicast-unattended
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+# --- Users ---
+- name: Create the ops (admin) user
+  ansible.builtin.user:
+    name: ops
+    shell: /bin/bash
+    groups: sudo
+    append: true
+
+- name: Allow ops to sudo without a password (key-only login)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-ops
+    mode: "0440"
+    content: "ops ALL=(ALL) NOPASSWD:ALL\n"
+    validate: visudo -cf %s
+
+- name: Create the ops .ssh directory
+  ansible.builtin.file:
+    path: /home/ops/.ssh
+    state: directory
+    owner: ops
+    group: ops
+    mode: "0700"
+
+- name: Install the ops SSH keys
+  ansible.builtin.copy:
+    dest: /home/ops/.ssh/authorized_keys
+    content: "{{ ops_ssh_keys | join('\n') }}\n"
+    owner: ops
+    group: ops
+    mode: "0600"
+
+# --- SSH ---
+# sshd -t needs this directory; it exists once sshd has run.
+- name: Ensure the sshd runtime directory exists
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    mode: "0755"
+
+- name: Harden sshd
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-tropicast.conf
+    mode: "0644"
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      AllowUsers {{ ssh_allow_users | join(' ') }}
+      MaxAuthTries 3
+      X11Forwarding no
+    validate: sshd -t -f %s
+  notify: Reload sshd
+
+- name: Ban repeated SSH failures
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/sshd.local
+    mode: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      backend = systemd
+      maxretry = 5
+      bantime = 1h
+  notify: Restart fail2ban
+
+- name: Start fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+    state: started
+
+# --- Docker ---
+- name: Add the Docker apt repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/debian
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+    signed_by: https://download.docker.com/linux/debian/gpg
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    update_cache: true
+
+# live-restore keeps containers (and listeners) running while the
+# Docker daemon restarts or upgrades.
+- name: Create the Docker config directory
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    mode: "0755"
+
+- name: Configure the Docker daemon
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+    content: "{{ docker_daemon | to_nice_json }}\n"
+  vars:
+    docker_daemon:
+      live-restore: true
+      log-driver: local
+      log-opts:
+        max-size: 20m
+        max-file: "5"
+      default-ulimits:
+        nofile:
+          Name: nofile
+          Soft: 65536
+          Hard: 65536
+  notify: Restart docker
+
+- name: Start Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started

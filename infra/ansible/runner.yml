@@ -1,0 +1,199 @@
+# Self-hosted GitHub Actions runner for the tropicast organization.
+# Setup: docs/how-to/set-up-ci-runner.md
+#
+# First run (registers the runner; the token is valid for one hour):
+#   token=$(gh api -X POST orgs/tropicast/actions/runners/registration-token --jq .token)
+#   ansible-playbook runner.yml -e runner_registration_token="$token"
+# Later runs need no token: registration is skipped once done.
+- name: CI runner
+  hosts: runners
+  # Root needs no sudo; the first run on a fresh server may lack it.
+  become: "{{ (ansible_user | default('root')) != 'root' }}"
+  vars:
+    ssh_allow_users: [ops]
+    runner_version: "2.338.0"
+    # Published in the release notes of actions/runner v2.338.0.
+    runner_sha256: af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
+    runner_dir: /opt/actions-runner
+    runner_org_url: https://github.com/tropicast
+    runner_labels: [hetzner, fsn1]
+  pre_tasks:
+    - name: Require admin keys
+      ansible.builtin.assert:
+        that: ops_ssh_keys | default([]) | length > 0
+        fail_msg: Set ops_ssh_keys in group_vars/all.yml.
+
+  tasks:
+    - name: Host baseline (users, SSH, updates, Docker)
+      ansible.builtin.import_tasks: tasks/baseline.yml
+
+    # Tools the workflows expect, as on GitHub's ubuntu-latest image.
+    - name: Install CI tools
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - ffmpeg
+          - git
+          - jq
+          - openssl
+          - python3
+          - shellcheck
+          - unzip
+          - zstd
+
+    # The runner user runs jobs. Docker access is root-equivalent anyway, so
+    # it also gets passwordless sudo (workflows call `sudo apt-get`). Keep
+    # this VM dedicated to CI.
+    - name: Create the runner user
+      ansible.builtin.user:
+        name: runner
+        shell: /bin/bash
+        groups: docker
+        append: true
+
+    - name: Allow the runner user to sudo without a password
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/91-runner
+        mode: "0440"
+        content: "runner ALL=(ALL) NOPASSWD:ALL\n"
+        validate: visudo -cf %s
+
+    - name: Create the runner directory
+      ansible.builtin.file:
+        path: "{{ runner_dir }}"
+        state: directory
+        owner: runner
+        group: runner
+        mode: "0750"
+
+    - name: Download the runner
+      ansible.builtin.get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "/tmp/actions-runner-{{ runner_version }}.tar.gz"
+        checksum: "sha256:{{ runner_sha256 }}"
+        mode: "0644"
+
+    - name: Unpack the runner
+      ansible.builtin.unarchive:
+        src: "/tmp/actions-runner-{{ runner_version }}.tar.gz"
+        dest: "{{ runner_dir }}"
+        remote_src: true
+        owner: runner
+        group: runner
+        creates: "{{ runner_dir }}/config.sh"
+
+    - name: Install the runner's system dependencies
+      ansible.builtin.command: "{{ runner_dir }}/bin/installdependencies.sh"
+      args:
+        creates: "{{ runner_dir }}/.deps-installed"
+      register: runner_deps
+      notify: Mark runner dependencies installed
+
+    - name: Check whether the runner is registered
+      ansible.builtin.stat:
+        path: "{{ runner_dir }}/.runner"
+      register: runner_registration
+
+    - name: Register and start the runner
+      when: not runner_registration.stat.exists
+      tags: [register]
+      block:
+        - name: Require a registration token
+          ansible.builtin.assert:
+            that: runner_registration_token | default('') | length > 0
+            fail_msg: Pass -e runner_registration_token=... (see the header of runner.yml).
+
+        - name: Register the runner with the organization
+          become: true
+          become_user: runner
+          no_log: true
+          ansible.builtin.command:
+            chdir: "{{ runner_dir }}"
+            argv:
+              - ./config.sh
+              - --unattended
+              - --url
+              - "{{ runner_org_url }}"
+              - --token
+              - "{{ runner_registration_token }}"
+              - --name
+              - "{{ inventory_hostname }}"
+              - --labels
+              - "{{ runner_labels | join(',') }}"
+              - --runnergroup
+              - Default
+              - --work
+              - _work
+              - --replace
+          changed_when: true
+
+        - name: Install the runner service
+          ansible.builtin.command:
+            chdir: "{{ runner_dir }}"
+            cmd: ./svc.sh install runner
+            creates: "{{ runner_dir }}/.service"
+
+    - name: Find the runner service
+      ansible.builtin.slurp:
+        src: "{{ runner_dir }}/.service"
+      register: runner_service
+      tags: [register]
+
+    - name: Start the runner service
+      ansible.builtin.systemd_service:
+        name: "{{ runner_service.content | b64decode | trim }}"
+        enabled: true
+        state: started
+      tags: [register]
+
+    # Keep disk use bounded but keep a warm build cache.
+    - name: Install the weekly Docker cleanup
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        mode: "0644"
+        content: "{{ item.content }}"
+      loop:
+        - name: docker-cleanup.service
+          content: |
+            [Unit]
+            Description=Prune old Docker images and excess build cache
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/bin/docker system prune -af --filter until=168h
+            ExecStart=/usr/bin/docker builder prune -f --keep-storage 20GB
+        - name: docker-cleanup.timer
+          content: |
+            [Unit]
+            Description=Weekly Docker cleanup
+
+            [Timer]
+            OnCalendar=Sun 03:00
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+      loop_control:
+        label: "{{ item.name }}"
+      notify: Reload systemd units
+
+    - name: Enable the weekly Docker cleanup
+      ansible.builtin.systemd_service:
+        name: docker-cleanup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Shared handlers
+      ansible.builtin.import_tasks: handlers/main.yml
+
+    - name: Mark runner dependencies installed
+      ansible.builtin.file:
+        path: "{{ runner_dir }}/.deps-installed"
+        state: touch
+        mode: "0644"
+
+    - name: Reload systemd units
+      ansible.builtin.systemd_service:
+        daemon_reload: true

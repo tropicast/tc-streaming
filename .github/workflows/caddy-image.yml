@@ -32,7 +32,9 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       packages: write

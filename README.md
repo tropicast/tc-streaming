@@ -142,6 +142,11 @@ checks; runs on `main` always finish.
 | `e2e.yml` | Images, Compose, auth stub or tests change | One job: builds both images once, runs `tests/source-auth.sh` and `tests/gateway.sh` |
 | `deploy-lint.yml`, `terraform.yml`, `ansible.yml` | Their own files change | Lint and validate |
 
+Jobs run where the repository variable `RUNS_ON` says: the self-hosted
+runner `tc-runner-1` (`["self-hosted","linux","x64"]`), or GitHub-hosted
+`ubuntu-latest` when it is unset. See
+[docs/how-to/set-up-ci-runner.md](docs/how-to/set-up-ci-runner.md).
+
 Images are tagged with the full git SHA (plus semver for Icecast tags); no
 `latest` tag is published. The `push` path filters of the two image
 workflows must match the path lists in `deploy.yml`, because a deploy uses
