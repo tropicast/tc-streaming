@@ -13,6 +13,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR replaces the running build.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # Only PRs: runs on main always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest

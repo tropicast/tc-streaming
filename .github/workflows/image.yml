@@ -8,12 +8,28 @@ on:
       - icecast.xml
       - .dockerignore
       - .github/workflows/image.yml
+  # Build on main only when the image changes. Keep these paths identical to
+  # the Icecast list in deploy.yml ("Resolve the release"): a deploy uses the
+  # image of the last main commit that touched them. Tags build regardless.
   push:
     branches: [main]
     tags: ["v*"]
+    paths:
+      - Dockerfile
+      - docker-entrypoint.py
+      - icecast.xml
+      - .dockerignore
 
 permissions:
   contents: read
+
+# A newer push to the same PR replaces the running build.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # On main, every image build must finish so its tag exists for deploys
+  # and rollbacks.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/icecast
@@ -45,8 +61,9 @@ jobs:
           context: .
           load: true
           tags: tropicast-icecast:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Shared with e2e.yml.
+          cache-from: type=gha,scope=icecast
+          cache-to: type=gha,mode=max,scope=icecast
 
       - name: Smoke test
         run: |
@@ -67,12 +84,28 @@ jobs:
           docker logs icecast
           exit 1
 
+      # Reuse the vulnerability DB for a day instead of downloading it each run.
+      - id: today
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.today.outputs.date }}
+          restore-keys: trivy-db-
+
       - name: Scan for critical vulnerabilities
         run: |
+          mkdir -p ~/.cache/trivy
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ~/.cache/trivy:/root/.cache/trivy \
             aquasec/trivy:0.67.2 image \
             --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
             tropicast-icecast:ci
+
+      # Trivy writes the DB as root; let the cache step read it.
+      - if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/trivy
 
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -89,4 +122,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+          cache-from: type=gha,scope=icecast

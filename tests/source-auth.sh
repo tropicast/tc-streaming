@@ -26,7 +26,9 @@ ENV
 
 compose() { docker compose -p "$project" --env-file "$env_file" "$@"; }
 # Icecast and the stub only; the gateway has its own test.
-compose up -d --build --wait icecast auth-stub >/dev/null
+build=(--build)
+[[ -n ${E2E_PREBUILT:-} ]] && build=()
+compose up -d "${build[@]}" --wait icecast auth-stub >/dev/null
 
 failures=0
 check() {

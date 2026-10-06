@@ -32,7 +32,10 @@ CADDY_HTTPS_PORT=$https_port
 ENV
 
 compose() { docker compose -p "$project" --env-file "$env_file" "$@"; }
-compose up -d --build --wait >/dev/null
+# CI builds the images once (E2E_PREBUILT=1); locally Compose builds them.
+build=(--build)
+[[ -n ${E2E_PREBUILT:-} ]] && build=()
+compose up -d "${build[@]}" --wait >/dev/null
 
 for _ in $(seq 1 30); do
     compose cp caddy:/data/caddy/pki/authorities/local/root.crt "$ca" >/dev/null 2>&1 && break
