@@ -1,0 +1,72 @@
+name: E2E
+
+# Source auth (#7) and gateway (#6) end-to-end tests in one job: ffmpeg is
+# installed once and both images are built once, from the same GHA cache as
+# image.yml and caddy-image.yml.
+on:
+  pull_request:
+    paths: &paths
+      - Dockerfile
+      - docker-entrypoint.py
+      - icecast.xml
+      - .dockerignore
+      - caddy/**
+      - compose.yaml
+      - auth-stub/**
+      - tests/**
+      - .github/workflows/e2e.yml
+  push:
+    branches: [main]
+    paths: *paths
+
+permissions:
+  contents: read
+
+# A newer push to the same PR replaces the running tests.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # Only PRs: runs on main always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the Icecast image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: tropicast-icecast:local
+          cache-from: type=gha,scope=icecast
+          cache-to: type=gha,mode=max,scope=icecast
+
+      - name: Build the Caddy image
+        uses: docker/build-push-action@v6
+        with:
+          context: caddy
+          load: true
+          tags: tropicast-caddy:local
+          cache-from: type=gha,scope=caddy
+          cache-to: type=gha,mode=max,scope=caddy
+
+      # Preinstalled on the self-hosted runner.
+      - name: Install ffmpeg
+        run: command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg; }
+
+      - name: Source auth
+        run: tests/source-auth.sh
+        env:
+          E2E_PREBUILT: "1"
+
+      - name: Gateway
+        run: tests/gateway.sh
+        env:
+          E2E_PREBUILT: "1"

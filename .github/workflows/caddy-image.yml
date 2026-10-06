@@ -7,18 +7,34 @@ on:
       - caddy/Dockerfile
       - caddy/.dockerignore
       - .github/workflows/caddy-image.yml
+  # Keep these paths identical to the Caddy list in deploy.yml ("Resolve the
+  # release"): a deploy uses the image of the last main commit that touched
+  # them.
   push:
     branches: [main]
+    paths:
+      - caddy/Dockerfile
+      - caddy/.dockerignore
 
 permissions:
   contents: read
+
+# A newer push to the same PR replaces the running build.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # On main, every image build must finish so its tag exists for deploys
+  # and rollbacks.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/caddy
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       packages: write
@@ -40,18 +56,35 @@ jobs:
           context: caddy
           load: true
           tags: tropicast-caddy:ci
+          # Shared with e2e.yml.
           cache-from: type=gha,scope=caddy
           cache-to: type=gha,mode=max,scope=caddy
 
       - name: Check the layer4 module is built in
         run: docker run --rm tropicast-caddy:ci caddy list-modules | grep -qx 'layer4.handlers.proxy'
 
+      # Reuse the vulnerability DB for a day instead of downloading it each run.
+      - id: today
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.today.outputs.date }}
+          restore-keys: trivy-db-
+
       - name: Scan for critical vulnerabilities
         run: |
+          mkdir -p ~/.cache/trivy
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ~/.cache/trivy:/root/.cache/trivy \
             aquasec/trivy:0.67.2 image \
             --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
             tropicast-caddy:ci
+
+      # Trivy writes the DB as root; let the cache step read it.
+      - if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/trivy
 
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@v3

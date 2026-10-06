@@ -13,15 +13,27 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR replaces the running build.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # Only PRs: runs on main always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     defaults:
       run:
         working-directory: infra/terraform
     steps:
       - uses: actions/checkout@v4
+      # The wrapper is a Node.js script; the self-hosted runner has no Node.js.
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false -input=false
       - run: terraform validate

@@ -1,9 +1,14 @@
-# Copy to group_vars/streaming.yml (git-ignored) and edit.
+# Copy the parts you need into group_vars/ (git-ignored):
+#   group_vars/all.yml        ops_ssh_keys (used by every host)
+#   group_vars/streaming.yml  deploy_ssh_keys
+# Never store the runner registration token here: pass it with -e.
 
-# Humans who administer the node; they get sudo.
+# group_vars/all.yml
+# Humans who administer the hosts; they get sudo.
 ops_ssh_keys:
   - "ssh-ed25519 AAAA... admin@example"
 
+# group_vars/streaming.yml
 # Key the deploy pipeline (#11) uses. No sudo; member of the docker group.
 deploy_ssh_keys:
   - "ssh-ed25519 AAAA... github-actions-deploy"

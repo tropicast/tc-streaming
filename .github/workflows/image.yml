@@ -8,19 +8,37 @@ on:
       - icecast.xml
       - .dockerignore
       - .github/workflows/image.yml
+  # Build on main only when the image changes. Keep these paths identical to
+  # the Icecast list in deploy.yml ("Resolve the release"): a deploy uses the
+  # image of the last main commit that touched them. Tags build regardless.
   push:
     branches: [main]
     tags: ["v*"]
+    paths:
+      - Dockerfile
+      - docker-entrypoint.py
+      - icecast.xml
+      - .dockerignore
 
 permissions:
   contents: read
+
+# A newer push to the same PR replaces the running build.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # On main, every image build must finish so its tag exists for deploys
+  # and rollbacks.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/icecast
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       packages: write
@@ -45,34 +63,60 @@ jobs:
           context: .
           load: true
           tags: tropicast-icecast:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Shared with e2e.yml.
+          cache-from: type=gha,scope=icecast
+          cache-to: type=gha,mode=max,scope=icecast
 
+      # Unique name and a random host port: the self-hosted runner is
+      # persistent and may run other jobs.
       - name: Smoke test
         run: |
-          docker run -d --name icecast \
+          name="icecast-smoke-$GITHUB_RUN_ID"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" \
             -e ICECAST_SOURCE_PASSWORD="$(openssl rand -hex 24)" \
             -e ICECAST_ADMIN_PASSWORD="$(openssl rand -hex 24)" \
             -e ICECAST_SOURCE_AUTH_URL=http://127.0.0.1:9/unused \
             -e ICECAST_SOURCE_AUTH_USER=icecast \
             -e ICECAST_SOURCE_AUTH_PASSWORD="$(openssl rand -hex 24)" \
-            -p 127.0.0.1:8000:8000 tropicast-icecast:ci
+            -p 127.0.0.1::8000 tropicast-icecast:ci
+          port=$(docker port "$name" 8000/tcp | head -1 | cut -d: -f2)
           for _ in $(seq 1 30); do
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' icecast)" = healthy ]; then
-              curl --fail --silent --output /dev/null http://127.0.0.1:8000/status-json.xsl
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' "$name")" = healthy ]; then
+              curl --fail --silent --output /dev/null "http://127.0.0.1:$port/status-json.xsl"
               exit 0
             fi
             sleep 2
           done
-          docker logs icecast
+          docker logs "$name"
           exit 1
+
+      - name: Remove the smoke test container
+        if: always()
+        run: docker rm -f "icecast-smoke-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
+
+      # Reuse the vulnerability DB for a day instead of downloading it each run.
+      - id: today
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.today.outputs.date }}
+          restore-keys: trivy-db-
 
       - name: Scan for critical vulnerabilities
         run: |
+          mkdir -p ~/.cache/trivy
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ~/.cache/trivy:/root/.cache/trivy \
             aquasec/trivy:0.67.2 image \
             --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
             tropicast-icecast:ci
+
+      # Trivy writes the DB as root; let the cache step read it.
+      - if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/trivy
 
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -89,4 +133,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+          cache-from: type=gha,scope=icecast

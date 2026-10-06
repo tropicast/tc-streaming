@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
+    # Unset: GitHub-hosted ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_SERVER: ${{ vars.DEPLOY_SERVER || 'tc-stream-1' }}
@@ -182,6 +184,14 @@ jobs:
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: deploy/ci-ssh-access.sh close "$GITHUB_RUN_ID"
+
+      # A self-hosted runner keeps its home directory between jobs: never
+      # leave the deploy key or a registry login behind.
+      - name: Remove credentials from the runner
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_ed25519 ~/.ssh/config
+          docker logout ghcr.io >/dev/null 2>&1 || true
 
       - name: Summary
         if: always()
