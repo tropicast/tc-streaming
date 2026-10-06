@@ -81,6 +81,38 @@ Locally, Compose mounts `deploy/stations.example.json` (override with
 `STATIONS_JSON`). `tests/station-limits.sh` checks caps, the default cap,
 plan formats and bitrates, and a reload that keeps listeners.
 
+### Opus and data-saver bitrates
+
+Each station can publish two mounts (issue #9):
+
+| Mount | Format | Default bitrate | For |
+|---|---|---|---|
+| `/stations/{id}/live.opus` | Ogg Opus, `audio/ogg` | **64 kbps** (48 kbps on the free plan) | Default for listeners: about half the data of MP3 at similar quality |
+| `/stations/{id}/live.mp3` | MP3, `audio/mpeg` | 128 kbps | Fallback for players without Ogg Opus (Safari before 18.4, many car and smart-speaker apps) |
+
+- The source sends Ogg Opus with `Content-Type: audio/ogg`; Icecast and
+  Caddy pass it through unchanged. The station's plan
+  (`stations.json`: `formats`, `max_bitrate_kbps`) decides which mounts and
+  bitrates it may publish.
+- Measured on production, a 64 kbps Opus stream (stereo, 48 kHz) delivered
+  about **35 MB per listener-hour** including the 64 KB start-up burst and
+  Ogg framing, against 28.8 MB for the raw bitrate. #12 measures it at load.
+- **Web player**: use Opus when the browser supports it, otherwise MP3, and
+  label higher quality as an explicit choice ("uses more data"):
+
+  ```js
+  const opus = new Audio().canPlayType('audio/ogg; codecs="opus"');
+  audio.src = `https://listen.example.com/stations/${id}/live.${opus ? "opus" : "mp3"}`;
+  ```
+
+- Browser support (2026): Chrome, Firefox, Edge and Android play Ogg Opus.
+  Safari added it in 18.4 but reports describe it as incomplete, so Apple
+  devices should get the MP3 mount until tested.
+- The desktop app publishes both formats: tropicast/tc-station#36.
+
+`tests/gateway.sh` checks that an Ogg Opus source reaches listeners as
+`audio/ogg` and decodes as Opus.
+
 ### Source authentication
 
 Broadcasters never use a shared password (issue #7). Each publish to

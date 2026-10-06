@@ -5,7 +5,7 @@ TLS, then streams stdin until it ends. Prints the server's first status
 code, or "closed" if the connection ends before any response.
 
     ffmpeg ... -f mp3 - | python3 raw_source.py HOST PORT MOUNT USER:PASS [--method SOURCE] [--ca FILE]
-        [--plain] [--bitrate KBPS]
+        [--plain] [--bitrate KBPS] [--content-type TYPE]
 """
 
 import argparse
@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--connect", help="IP to connect to instead of resolving HOST")
     parser.add_argument("--plain", action="store_true", help="no TLS (straight to Icecast)")
     parser.add_argument("--bitrate", type=int, help="send Ice-Bitrate with this value")
+    parser.add_argument("--content-type", default="audio/mpeg", help="e.g. audio/ogg for Opus")
     args = parser.parse_args()
 
     raw = socket.create_connection((args.connect or args.host, args.port), timeout=10)
@@ -40,7 +41,7 @@ def main():
         expect += f"Ice-Bitrate: {args.bitrate}\r\n"
     conn.sendall(
         f"{args.method} {args.mount} HTTP/1.1\r\nHost: {args.host}\r\n"
-        f"Authorization: Basic {auth}\r\nContent-Type: audio/mpeg\r\n"
+        f"Authorization: Basic {auth}\r\nContent-Type: {args.content_type}\r\n"
         f"Ice-Public: 0\r\n{expect}\r\n".encode()
     )
     try:
