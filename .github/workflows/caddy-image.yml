@@ -39,6 +39,13 @@ jobs:
       contents: read
       packages: write
     steps:
+      # Per-job Docker config: parallel jobs on the self-hosted runner must
+      # not share registry logins or buildx state.
+      - name: Isolate the Docker config
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
@@ -55,36 +62,37 @@ jobs:
         with:
           context: caddy
           load: true
-          tags: tropicast-caddy:ci
+          tags: tropicast-caddy:ci-${{ github.run_id }}-${{ github.run_attempt }}
           # Shared with e2e.yml.
           cache-from: type=gha,scope=caddy
           cache-to: type=gha,mode=max,scope=caddy
 
       - name: Check the layer4 module is built in
-        run: docker run --rm tropicast-caddy:ci caddy list-modules | grep -qx 'layer4.handlers.proxy'
+        run: docker run --rm tropicast-caddy:ci-${{ github.run_id }}-${{ github.run_attempt }} caddy list-modules | grep -qx 'layer4.handlers.proxy'
 
       # Reuse the vulnerability DB for a day instead of downloading it each run.
+      # Kept per job ($RUNNER_TEMP) so parallel scans do not share one DB.
       - id: today
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/trivy
+          path: ${{ runner.temp }}/trivy
           key: trivy-db-${{ steps.today.outputs.date }}
           restore-keys: trivy-db-
 
       - name: Scan for critical vulnerabilities
         run: |
-          mkdir -p ~/.cache/trivy
+          mkdir -p "$RUNNER_TEMP/trivy"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            -v ~/.cache/trivy:/root/.cache/trivy \
+            -v "$RUNNER_TEMP/trivy:/root/.cache/trivy" \
             aquasec/trivy:0.67.2 image \
             --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
-            tropicast-caddy:ci
+            tropicast-caddy:ci-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Trivy writes the DB as root; let the cache step read it.
       - if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/trivy
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/trivy"
 
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -102,3 +110,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=caddy
+
+      - name: Remove the per-run image
+        if: always()
+        run: docker rmi -f "tropicast-caddy:ci-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true

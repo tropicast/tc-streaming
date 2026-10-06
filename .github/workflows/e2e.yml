@@ -2,7 +2,8 @@ name: E2E
 
 # Source auth (#7) and gateway (#6) end-to-end tests in one job: ffmpeg is
 # installed once and both images are built once, from the same GHA cache as
-# image.yml and caddy-image.yml.
+# image.yml and caddy-image.yml. Image tags, Compose projects and ports are
+# unique per run, so parallel jobs on one runner do not collide.
 on:
   pull_request:
     paths: &paths
@@ -35,6 +36,13 @@ jobs:
     # Unset: GitHub-hosted ubuntu-latest.
     runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
     steps:
+      # Per-job Docker config: parallel jobs on the self-hosted runner must
+      # not share registry logins or buildx state.
+      - name: Isolate the Docker config
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
@@ -44,7 +52,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: tropicast-icecast:local
+          tags: tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=icecast
           cache-to: type=gha,mode=max,scope=icecast
 
@@ -53,7 +61,7 @@ jobs:
         with:
           context: caddy
           load: true
-          tags: tropicast-caddy:local
+          tags: tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=caddy
           cache-to: type=gha,mode=max,scope=caddy
 
@@ -65,8 +73,18 @@ jobs:
         run: tests/source-auth.sh
         env:
           E2E_PREBUILT: "1"
+          TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          ICECAST_IMAGE: tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          CADDY_IMAGE: tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Gateway
         run: tests/gateway.sh
         env:
           E2E_PREBUILT: "1"
+          TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          ICECAST_IMAGE: tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          CADDY_IMAGE: tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Remove the per-run images
+        if: always()
+        run: docker rmi -f "tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}" "tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true

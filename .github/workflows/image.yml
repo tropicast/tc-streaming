@@ -43,6 +43,13 @@ jobs:
       contents: read
       packages: write
     steps:
+      # Per-job Docker config: parallel jobs on the self-hosted runner must
+      # not share registry logins or buildx state.
+      - name: Isolate the Docker config
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
@@ -62,7 +69,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: tropicast-icecast:ci
+          tags: tropicast-icecast:ci-${{ github.run_id }}-${{ github.run_attempt }}
           # Shared with e2e.yml.
           cache-from: type=gha,scope=icecast
           cache-to: type=gha,mode=max,scope=icecast
@@ -79,7 +86,7 @@ jobs:
             -e ICECAST_SOURCE_AUTH_URL=http://127.0.0.1:9/unused \
             -e ICECAST_SOURCE_AUTH_USER=icecast \
             -e ICECAST_SOURCE_AUTH_PASSWORD="$(openssl rand -hex 24)" \
-            -p 127.0.0.1::8000 tropicast-icecast:ci
+            -p 127.0.0.1::8000 tropicast-icecast:ci-${{ github.run_id }}-${{ github.run_attempt }}
           port=$(docker port "$name" 8000/tcp | head -1 | cut -d: -f2)
           for _ in $(seq 1 30); do
             if [ "$(docker inspect -f '{{.State.Health.Status}}' "$name")" = healthy ]; then
@@ -96,27 +103,28 @@ jobs:
         run: docker rm -f "icecast-smoke-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
 
       # Reuse the vulnerability DB for a day instead of downloading it each run.
+      # Kept per job ($RUNNER_TEMP) so parallel scans do not share one DB.
       - id: today
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/trivy
+          path: ${{ runner.temp }}/trivy
           key: trivy-db-${{ steps.today.outputs.date }}
           restore-keys: trivy-db-
 
       - name: Scan for critical vulnerabilities
         run: |
-          mkdir -p ~/.cache/trivy
+          mkdir -p "$RUNNER_TEMP/trivy"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            -v ~/.cache/trivy:/root/.cache/trivy \
+            -v "$RUNNER_TEMP/trivy:/root/.cache/trivy" \
             aquasec/trivy:0.67.2 image \
             --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
-            tropicast-icecast:ci
+            tropicast-icecast:ci-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Trivy writes the DB as root; let the cache step read it.
       - if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/trivy
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/trivy"
 
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -134,3 +142,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=icecast
+
+      - name: Remove the per-run image
+        if: always()
+        run: docker rmi -f "tropicast-icecast:ci-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true

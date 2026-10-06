@@ -1,0 +1,83 @@
+# One self-hosted runner process. Included by runner.yml with
+# `instance` = {name, dir}.
+- name: Create the runner directory for {{ instance.name }}
+  ansible.builtin.file:
+    path: "{{ instance.dir }}"
+    state: directory
+    owner: runner
+    group: runner
+    mode: "0750"
+
+- name: Unpack the runner for {{ instance.name }}
+  ansible.builtin.unarchive:
+    src: "/tmp/actions-runner-{{ runner_version }}.tar.gz"
+    dest: "{{ instance.dir }}"
+    remote_src: true
+    owner: runner
+    group: runner
+    creates: "{{ instance.dir }}/config.sh"
+
+# Once per runner version for the whole host.
+- name: Install the runner's system dependencies
+  ansible.builtin.shell: >-
+    {{ instance.dir }}/bin/installdependencies.sh
+    && touch /var/lib/actions-runner-deps-{{ runner_version }}
+  args:
+    creates: /var/lib/actions-runner-deps-{{ runner_version }}
+
+- name: Check the registration of {{ instance.name }}
+  ansible.builtin.stat:
+    path: "{{ instance.dir }}/.runner"
+  register: runner_registration
+
+- name: Register and install the runner {{ instance.name }}
+  when: not runner_registration.stat.exists
+  tags: [register]
+  block:
+    - name: Require a registration token
+      ansible.builtin.assert:
+        that: runner_registration_token | default('') | length > 0
+        fail_msg: Pass -e runner_registration_token=... (see the header of runner.yml).
+
+    - name: Register with the organization the runner {{ instance.name }}
+      become: true
+      become_user: runner
+      no_log: true
+      ansible.builtin.command:
+        chdir: "{{ instance.dir }}"
+        argv:
+          - ./config.sh
+          - --unattended
+          - --url
+          - "{{ runner_org_url }}"
+          - --token
+          - "{{ runner_registration_token }}"
+          - --name
+          - "{{ instance.name }}"
+          - --labels
+          - "{{ runner_labels | join(',') }}"
+          - --runnergroup
+          - Default
+          - --work
+          - _work
+          - --replace
+      changed_when: true
+
+    - name: Install the service for {{ instance.name }}
+      ansible.builtin.command:
+        chdir: "{{ instance.dir }}"
+        cmd: ./svc.sh install runner
+        creates: "{{ instance.dir }}/.service"
+
+- name: Find the service of {{ instance.name }}
+  ansible.builtin.slurp:
+    src: "{{ instance.dir }}/.service"
+  register: runner_service
+  tags: [register]
+
+- name: Start the runner {{ instance.name }}
+  ansible.builtin.systemd_service:
+    name: "{{ runner_service.content | b64decode | trim }}"
+    enabled: true
+    state: started
+  tags: [register]
