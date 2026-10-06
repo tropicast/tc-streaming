@@ -174,14 +174,11 @@ it in GitHub first.
 ```sh
 ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4>
 /opt/tc-streaming/deploy.sh status
-cd /opt/tc-streaming && docker compose logs --tail 100 icecast caddy
+/opt/tc-streaming/deploy.sh compose logs --tail 100 icecast caddy
 ```
 
-`docker compose` needs `ICECAST_IMAGE_TAG` set; take it from `CURRENT`:
-
-```sh
-export ICECAST_IMAGE_TAG=$(cut -d' ' -f2 /opt/tc-streaming/CURRENT)
-```
+Plain `docker compose` fails on the node without the release's image tags;
+`deploy.sh compose …` loads them and passes the rest to `docker compose`.
 
 ## Monitoring
 

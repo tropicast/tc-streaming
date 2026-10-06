@@ -4,6 +4,7 @@
 #   deploy.sh activate <bundle-dir> <git-sha>
 #   deploy.sh rollback
 #   deploy.sh status
+#   deploy.sh compose <args>   docker compose with the active release's tags
 #
 # Layout under $DEPLOY_ROOT (default /opt/tc-streaming):
 #   .env                 secrets, written by the deploy workflow (0600)
@@ -159,6 +160,14 @@ rollback)
     SKIP_PULL=${SKIP_PULL:-1} start
     record "$sha" "$ICECAST_IMAGE_TAG"
     log "active: $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
+    ;;
+compose)
+    if [[ -f CURRENT ]]; then
+        read -r sha image_tag < CURRENT
+        load_release "$sha" "$image_tag"
+    fi
+    shift
+    compose "$@"
     ;;
 status)
     echo "current:  $(cat CURRENT 2>/dev/null || echo none)"
