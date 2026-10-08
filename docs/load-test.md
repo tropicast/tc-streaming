@@ -46,7 +46,7 @@ MP3 89.6 Mbit/s (128 kbps per listener).
 
 ### Egress per listener-hour
 
-| Stream | Audio payload | Billed egress at the node (×1.28, see below) |
+| Stream | Audio payload | Billed egress at the node at 1,400 listeners (×1.28, see below) |
 |---|---|---|
 | Opus 64 kbps (VBR, ~46 kbps) | **20.9 MB** | **~27 MB** |
 | MP3 128 kbps | **57.9 MB** | **~74 MB** |
@@ -78,11 +78,41 @@ it is tracked as a follow-up. Plan with the node-level figure.
 
 ## Soak test: 24 hours
 
-150 Opus + 150 MP3 listeners (~38 Mbit/s, ~410 GB) from
-2026-10-06 22:02 UTC to 2026-10-07 22:02 UTC, node sampled every 60 s.
+150 Opus + 150 MP3 listeners from 2026-10-06 22:02 to 2026-10-07 22:04 UTC
+(2 min ramp, 24 h hold), node sampled every 60 s (1,406 samples).
+**Result: pass.**
 
-Results: *pending, filled in when the run ends.* Pass criteria: no audio
-drops or reconnect loops, no steady memory growth in Icecast or Caddy.
+| Stream | Listeners | Connects | Drops | Refused | Errors | Payload per listener-hour | Time to first audio p50 / p95 |
+|---|---|---|---|---|---|---|---|
+| Opus 64 kbps | 150 | 150 | 0 | 0 | 0 | 20.6 MB | 721 ms / 1.0 s |
+| MP3 128 kbps | 150 | 150 | 0 | 0 | 0 | 57.6 MB | 328 ms / 374 ms |
+
+Every listener kept its first connection for 24 hours: no drops and no
+reconnects. Throughput was flat across all 287 reports (Opus 6.8–6.9,
+MP3 19.2 Mbit/s).
+
+| Node measure | Average | Max | Trend over 24 h |
+|---|---|---|---|
+| CPU busy | 3.8% | 5.6% | flat |
+| Network out | 28.3 Mbit/s | 28.9 Mbit/s | flat |
+| Memory available | 6,671 MB | | 6,675 → 6,671 MB |
+| Icecast memory | 14.7 MB | 19.5 MB | 14.6 → 14.7 MB (no leak) |
+| Caddy memory | 281 MB | 284 MB | 281.5 → 281.1 MB (no leak) |
+| Icecast / Caddy CPU | 2.9% / 9.6% | 9.3% / 18.3% | flat |
+
+No container restarted. The soak used about **306 GB** of egress (1.5% of
+the monthly quota).
+
+The `demo` station was added during the soak with a deploy that changed no
+image: the soak listeners did not notice it.
+
+### Overhead depends on load
+
+At 300 listeners the node sent 28.3 Mbit/s for 26.1 Mbit/s of payload:
+**~8.5% overhead**, against 28% at 1,400 listeners. The per-listener-hour
+billed egress at moderate load is therefore closer to the payload figures
+(Opus ~22 MB, MP3 ~63 MB) than to the ramp-test figures. #37 investigates
+why the overhead grows with load; until then plan with the higher figures.
 
 ## Reproduce
 
