@@ -1,0 +1,11 @@
+Tropicast streaming
+Copyright 2026 Tropicast
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Icecast, Caddy and other components used by this repository are separate
+works under their own licenses. This repository contains only configuration,
+scripts and tooling for them.
+
+"Tropicast" and the Tropicast logo are trademarks of Tropicast. The license does
+not grant permission to use them, except to describe the origin of the work.
