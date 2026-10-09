@@ -249,14 +249,6 @@ $1.12/TB.
   same time, plan a second node (Growth stage in the epic).
 - Lower default bitrates (Opus 48-64 kbps, #9) cut egress per listener.
 
-### CI runner down
-
-Jobs on `tc-runner-1` wait in the queue while it is offline. Check it with
-`gh api orgs/tropicast/actions/runners --jq '.runners[] | {name, status}'`.
-To deploy anyway, switch the repository back to GitHub-hosted runners
-(`gh variable delete RUNS_ON`), deploy, then set it again. See
-[how-to/set-up-ci-runner.md](how-to/set-up-ci-runner.md).
-
 ### Reboots and updates
 
 Security updates install automatically but never reboot the node, because

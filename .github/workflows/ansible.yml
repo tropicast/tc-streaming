@@ -22,13 +22,12 @@ concurrency:
 
 jobs:
   lint:
-    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
     # Unset: GitHub-hosted ubuntu-latest.
-    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: infra/ansible
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uvx ansible-lint site.yml runner.yml
+      - run: uvx ansible-lint site.yml

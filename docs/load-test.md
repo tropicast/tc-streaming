@@ -197,6 +197,7 @@ ssh ops@<node> 'bash -s 10' < tests/load/sample-node.sh > node.csv   # in parall
 ```
 
 Raise the station's cap first (`deploy.sh apply-stations`), run from a
-machine with enough bandwidth (the CI runner works), and restore the cap
+machine with enough bandwidth (a temporary Hetzner CX33 in the same location
+works), and restore the cap
 afterwards. Each 1,000 listeners at MP3 128 kbps cost about 74 GB of the
 node's quota per hour.

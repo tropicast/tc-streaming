@@ -206,12 +206,9 @@ checks; runs on `main` always finish.
 | `e2e.yml` | Images, Compose, auth stub or tests change | One job: builds both images once, runs `tests/source-auth.sh` and `tests/gateway.sh` |
 | `deploy-lint.yml`, `terraform.yml`, `ansible.yml` | Their own files change | Lint and validate |
 
-Jobs run where the repository variable `RUNS_ON` says: the self-hosted
-runner host (`["self-hosted","linux","x64"]`, two jobs at a time), or
-GitHub-hosted `ubuntu-latest` when it is unset. Workflows and tests use
-per-run image tags, Compose projects, ports and Docker config, so parallel
-jobs on one host do not collide. See
-[docs/how-to/set-up-ci-runner.md](docs/how-to/set-up-ci-runner.md).
+Jobs run on GitHub-hosted `ubuntu-latest` runners. Workflows and tests use
+per-run image tags, Compose projects, ports and Docker config, so they never
+depend on what another job left behind.
 
 Images are tagged with the full git SHA (plus semver for Icecast tags); no
 `latest` tag is published. The `push` path filters of the two image

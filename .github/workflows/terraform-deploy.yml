@@ -41,9 +41,8 @@ defaults:
 
 jobs:
   terraform:
-    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
     # Unset: GitHub-hosted ubuntu-latest.
-    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     steps:
       - name: Allow only main
         if: github.ref != 'refs/heads/main'

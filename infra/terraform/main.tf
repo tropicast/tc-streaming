@@ -39,13 +39,13 @@ resource "hcloud_firewall" "streaming" {
   name   = "${var.name}-fw"
   labels = local.labels
 
-  # The CI runner deploys over SSH as the deploy user.
+  # CI deploys open SSH for their own runner per run (deploy/ci-ssh-access.sh).
   rule {
-    description = "SSH from admins and the CI runner"
+    description = "SSH from admins"
     direction   = "in"
     protocol    = "tcp"
     port        = "22"
-    source_ips  = concat(var.admin_cidrs, ["${hcloud_server.runner.ipv4_address}/32"])
+    source_ips  = var.admin_cidrs
   }
 
   rule {

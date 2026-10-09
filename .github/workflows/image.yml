@@ -36,15 +36,13 @@ env:
 
 jobs:
   build:
-    # Repo variable RUNS_ON picks the runner, e.g. ["self-hosted","linux","x64"].
     # Unset: GitHub-hosted ubuntu-latest.
-    runs-on: ${{ fromJSON(vars.RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      # Per-job Docker config: parallel jobs on the self-hosted runner must
-      # not share registry logins or buildx state.
+      # Per-job Docker config: keep registry logins and buildx state in this job.
       - name: Isolate the Docker config
         run: |
           mkdir -p "$RUNNER_TEMP/docker"
@@ -74,8 +72,7 @@ jobs:
           cache-from: type=gha,scope=icecast
           cache-to: type=gha,mode=max,scope=icecast
 
-      # Unique name and a random host port: the self-hosted runner is
-      # persistent and may run other jobs.
+      # Unique name and a random host port, so the test never collides with another container.
       - name: Smoke test
         run: |
           name="icecast-smoke-$GITHUB_RUN_ID"
