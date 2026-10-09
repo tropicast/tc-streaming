@@ -21,7 +21,3 @@ output "hostnames" {
     "${var.ingest_hostname}.${var.dns_zone}",
   ]
 }
-
-output "runner_ipv4" {
-  value = hcloud_server.runner.ipv4_address
-}

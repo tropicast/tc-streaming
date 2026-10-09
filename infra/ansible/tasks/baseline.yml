@@ -1,5 +1,4 @@
-# Shared host baseline for the streaming node (site.yml) and the CI runner
-# (runner.yml). Expects:
+# Host baseline for the streaming node (site.yml). Expects:
 #   ops_ssh_keys       admin public keys (user ops, sudo)
 #   ssh_allow_users    users allowed to log in over SSH
 - name: Install base packages
