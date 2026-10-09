@@ -78,6 +78,8 @@
 
 		reverse_proxy icecast:8000 {
 			# Send audio as it arrives; never buffer the response.
+			# Caddy does this for any response without Content-Length
+			# anyway; a longer interval has no effect (#37).
 			flush_interval -1
 		}
 	}

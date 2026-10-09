@@ -53,8 +53,8 @@ MP3 89.6 Mbit/s (128 kbps per listener).
 
 The node sent 155.8 Mbit/s for 121.6 Mbit/s of audio payload: **28%
 overhead** (TCP/IP headers, TLS records, HTTP chunking). A local test
-through the same gateway measured 11.6%, so part of the gap is unexplained;
-it is tracked as a follow-up. Plan with the node-level figure.
+through the same gateway measured 11.6%. See *Egress overhead (#37)* below
+for the cause. Plan with the node-level figure.
 
 ## Conclusions and limits
 
@@ -113,6 +113,78 @@ At 300 listeners the node sent 28.3 Mbit/s for 26.1 Mbit/s of payload:
 billed egress at moderate load is therefore closer to the payload figures
 (Opus ~22 MB, MP3 ~63 MB) than to the ramp-test figures. #37 investigates
 why the overhead grows with load; until then plan with the higher figures.
+
+## Egress overhead (#37)
+
+### Framing: about 10%, and the same at every load
+
+Local stack (Caddy 2.11.6, Icecast 2.5, release `7765041`), pink-noise
+sources (MP3 128 kbps, Opus 64 kbps), `tools/loadtest` through Caddy. The
+TCP counters come from Caddy's network namespace (`/proc/net/snmp`).
+Overhead = bytes Caddy sent on the wire (headers counted per TCP segment)
+÷ audio bytes the listeners received − 1.
+
+| Listeners (half Opus, half MP3) | Payload per TCP segment | Retransmits | Overhead |
+|---|---|---|---|
+| 100 | 753 B | 4 | 10.7% |
+| 300 | 751 B | 38 | 10.7% |
+| 1,400 | 751 B | 299 | 10.8% |
+
+| Format only (300 listeners) | Payload per TCP segment | Overhead |
+|---|---|---|
+| Opus 64 kbps | 928 B | 8.5% |
+| MP3 128 kbps | 698 B | 11.6% |
+
+Icecast writes each listener's audio in small blocks, and Caddy forwards
+each block at once. Each block becomes one HTTP chunk (~7 B), one TLS
+record (22 B) and one TCP segment (66 B of Ethernet, IP and TCP headers),
+about 95 B per 750 B of audio. This overhead does not depend on the number
+of listeners.
+
+### Caddy `flush_interval` has no effect
+
+Caddy ignores `flush_interval` for responses without `Content-Length`
+and flushes every write at once (`flushInterval()` in
+`modules/caddyhttp/reverseproxy/streaming.go`, v2.11.6). Icecast streams
+never send a length. Measured with 300 listeners:
+
+| `flush_interval` | Payload per TCP segment | Overhead | Time to first audio p50, Opus / MP3 |
+|---|---|---|---|
+| `-1` (current) | 751 B | 10.8% | 535 / 217 ms |
+| `100ms` | 751 B | 10.8% | 549 / 220 ms |
+| `250ms` | 750 B | 10.8% | 526 / 203 ms |
+
+The setting stays `-1`, which documents what Caddy does anyway. The
+earlier attempt to change it also had no effect, for the same reason.
+Larger writes would need a change in Icecast or a buffering proxy, and
+would cut at most ~5 points.
+
+### Load-dependent part: the network path
+
+In production the overhead went from ~8.5% at 300 listeners to 28% at
+1,400. The local stack shows no such growth: segment size, framing and
+retransmits stay flat up to 1,400 listeners. The extra ~17 points come from
+the path between the node and the load generator (`tc-runner-1`).
+Retransmits are the likely cause, because they are sent bytes that the
+listener counts only once.
+
+`tests/load/sample-node.sh` now records packets per second, TCP segments
+per second and retransmits per second from the Caddy container. Next
+production load test: compare `retrans_ps` with `out_segs_ps` at 300 and
+at 1,400 listeners.
+
+Until that test runs, plan with:
+
+| Use | Factor over audio payload |
+|---|---|
+| Framing only (normal load, many networks) | **1.10** (Opus 1.09, MP3 1.12) |
+| Worst case measured (1,400 listeners from one host) | 1.28 |
+
+Real listeners come from many networks, not from one VM. Retransmits
+then spread over many paths, so production should stay near the framing
+figure. The control plane (tc-dashboard#10) uses **1.10** to estimate egress
+per station. The operator view uses the node's real `tx_bytes` against
+the quota, not the estimate.
 
 ## Reproduce
 
