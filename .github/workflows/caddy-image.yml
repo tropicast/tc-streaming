@@ -32,7 +32,6 @@ env:
 
 jobs:
   build:
-    # Unset: GitHub-hosted ubuntu-latest.
     runs-on: ubuntu-latest
     permissions:
       contents: read

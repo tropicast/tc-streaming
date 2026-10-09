@@ -41,7 +41,6 @@ defaults:
 
 jobs:
   terraform:
-    # Unset: GitHub-hosted ubuntu-latest.
     runs-on: ubuntu-latest
     steps:
       - name: Allow only main

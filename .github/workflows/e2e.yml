@@ -36,7 +36,6 @@ concurrency:
 
 jobs:
   e2e:
-    # Unset: GitHub-hosted ubuntu-latest.
     runs-on: ubuntu-latest
     steps:
       # Per-job Docker config: keep registry logins and buildx state in this job.
