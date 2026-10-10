@@ -33,10 +33,19 @@
         group: deploy
         mode: "0700"
 
+    # Provisioning keys (control plane, tc-dashboard#8) can only run
+    # apply-stations: a forced command, and "restrict" turns off forwarding,
+    # PTY and the user's rc file.
     - name: Install the deploy SSH keys
       ansible.builtin.copy:
         dest: /home/deploy/.ssh/authorized_keys
-        content: "{{ deploy_ssh_keys | join('\n') }}\n"
+        content: |
+          {% for key in deploy_ssh_keys %}
+          {{ key }}
+          {% endfor %}
+          {% for key in provisioning_ssh_keys | default([]) %}
+          command="/opt/tc-streaming/deploy.sh apply-stations",restrict {{ key }}
+          {% endfor %}
         owner: deploy
         group: deploy
         mode: "0600"
