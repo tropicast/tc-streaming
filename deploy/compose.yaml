@@ -74,6 +74,11 @@ services:
     command: ["python3", "-u", "/srv/icecast_exporter.py"]
     volumes:
       - ./exporter/icecast_exporter.py:/srv/icecast_exporter.py:ro
+    # The control plane (tc-dashboard#10) reads it over the private network.
+    # Hetzner firewalls do not filter that network; nothing else listens there.
+    # Without PRIVATE_IP, loopback only.
+    ports:
+      - "${PRIVATE_IP:-127.0.0.1}:9100:9100"
     environment:
       ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:-}
       HCLOUD_READ_TOKEN: ${HCLOUD_READ_TOKEN:-}

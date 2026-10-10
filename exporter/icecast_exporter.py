@@ -1,6 +1,8 @@
 """Prometheus exporter for the streaming node (#10).
 
-Serves /metrics on :9100 (internal Docker network only):
+Serves /metrics on :9100: on the internal Docker network for Alloy, and on the
+node's private-network address for the control plane (tc-dashboard#10), which
+reads listeners and egress here instead of holding Icecast credentials.
 - Icecast stats from /admin/stats.xml: listeners and bytes per station.
 - The node's month-to-date egress and included quota from the Hetzner
   Cloud API, when HCLOUD_READ_TOKEN is set (use a read-only token).
@@ -82,6 +84,8 @@ def icecast_lines():
         "icecast_mount_read_bytes_total": ("counter", "Bytes received from the source since it started.",
                                            lambda s: number(s.findtext("total_bytes_read"))),
         "icecast_mount_start_timestamp_seconds": ("gauge", "When the source connected.", stream_start),
+        "icecast_mount_bitrate_kbps": ("gauge", "Source bitrate: as declared (ice-bitrate), else measured.",
+                                       source_bitrate),
     }
     sources = root.findall("source")
     for metric, (kind, help_text, value) in per_mount.items():
@@ -102,6 +106,21 @@ def stream_start(source):
         return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S%z").timestamp()
     except ValueError:
         return 0
+
+
+def source_bitrate(source):
+    """The declared bitrate, or the average incoming rate once the source ran 10 s; 0 if unknown."""
+    declared = number(source.findtext("bitrate"))
+    if declared <= 0:
+        match = re.search(r"(?:^|;)\s*(?:ice-)?bitrate=(\d+)", source.findtext("audio_info") or "")
+        declared = number(match.group(1)) if match else 0
+    if declared > 0:
+        return declared
+    started = stream_start(source)
+    seconds = time.time() - started if started else 0
+    if seconds < 10:
+        return 0
+    return round(number(source.findtext("total_bytes_read")) * 8 / 1000 / seconds, 1)
 
 
 def hcloud_lines():

@@ -103,6 +103,17 @@ gh variable set ICECAST_SOURCE_AUTH_URL --body https://<api-host>/icecast/source
 gh variable set ICECAST_SOURCE_AUTH_USER --body icecast
 ```
 
+**Control plane on the private network** (tc-dashboard `infra/terraform`
+attaches this node at `10.20.1.2`): the exporter (Compose profile
+`monitoring`) then also listens on that address, port 9100, so the control
+plane reads live status, listeners and egress without Icecast credentials.
+
+```sh
+gh variable set PRIVATE_IP --body 10.20.1.2
+```
+
+Without `PRIVATE_IP` the exporter port stays on loopback.
+
 **Until the API exists**, run the auth stub on the node instead:
 
 ```sh
