@@ -1,6 +1,6 @@
 # Copy the parts you need into group_vars/ (git-ignored):
 #   group_vars/all.yml        ops_ssh_keys (used by every host)
-#   group_vars/streaming.yml  deploy_ssh_keys
+#   group_vars/streaming.yml  deploy_ssh_keys, provisioning_ssh_keys
 
 # group_vars/all.yml
 # Humans who administer the hosts; they get sudo.
@@ -11,3 +11,7 @@ ops_ssh_keys:
 # Key the deploy pipeline (#11) uses. No sudo; member of the docker group.
 deploy_ssh_keys:
   - "ssh-ed25519 AAAA... github-actions-deploy"
+# Keys the control plane uses to push station limits (tc-dashboard#8). They
+# run only `deploy.sh apply-stations` (forced command), nothing else.
+provisioning_ssh_keys:
+  - "ssh-ed25519 AAAA... tc-dashboard-provisioning"

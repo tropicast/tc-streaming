@@ -190,9 +190,18 @@ and Alloy run on the node with the Compose profile `monitoring`.
 ## Change station limits
 
 Station caps, formats and bitrates live in `/opt/tc-streaming/stations.json`
-(see README, *Station limits*). Until the control plane pushes them, they
-come from the repository variable `STATION_LIMITS` (JSON) on every deploy.
-Applying them never restarts Icecast.
+(see README, *Station limits*). Applying them never restarts Icecast.
+
+- **Control plane (normal):** the dashboard renders the file from its database
+  and pushes it over SSH with a provisioning key, which the node restricts to
+  `deploy.sh apply-stations` (`provisioning_ssh_keys` in Ansible). It
+  re-applies within seconds of a change and retries failures. Its operator
+  view (`GET /api/v1/operator/streaming-nodes`) shows the applied version and
+  errors.
+- **`STATION_LIMITS` (fallback):** when the repository variable is set, every
+  deploy writes it to the node. When it is unset, a deploy keeps the node's
+  file. Delete the variable once the control plane pushes limits, or the next
+  deploy overwrites them until the control plane re-applies (at most 30 s).
 
 ```sh
 gh variable set STATION_LIMITS < stations.json   # then deploy, or on the node:
