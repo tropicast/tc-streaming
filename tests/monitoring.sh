@@ -75,6 +75,8 @@ listener=$!
 check "icecast_up is 1" 1 "$(query_until 'icecast_up{instance="test-node"}' 1)"
 check "station 42 is live" 1 "$(query_until 'icecast_mount_up{station="42"}' 1)"
 check "station 42 has 1 listener" 1 "$(query_until 'icecast_mount_listeners{station="42"}' 1)"
+check "station 42 reports its bitrate (about 64 kbps)" 1 \
+    "$(query_until '(icecast_mount_bitrate_kbps{station="42"} > bool 48) * (icecast_mount_bitrate_kbps{station="42"} < bool 80)' 1)"
 check "host metrics arrive (up{job=node})" 1 "$(query_until 'up{job="node",instance="test-node"}' 1)"
 
 kill "$listener" "$publisher" 2>/dev/null || true

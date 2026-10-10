@@ -132,6 +132,8 @@ jobs:
           INGEST_HOST: ${{ vars.INGEST_HOST }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           COMPOSE_PROFILES: ${{ vars.COMPOSE_PROFILES }}
+          # Private-network address (tc-dashboard infra): the exporter listens there for the control plane.
+          PRIVATE_IP: ${{ vars.PRIVATE_IP }}
         run: |
           required=(ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD ICECAST_RELAY_PASSWORD
                     ICECAST_SOURCE_AUTH_PASSWORD ICECAST_SOURCE_AUTH_URL LISTEN_HOST
@@ -141,7 +143,7 @@ jobs:
           done
           names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS
                  GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_TOKEN
-                 HCLOUD_READ_TOKEN NODE_NAME)
+                 HCLOUD_READ_TOKEN NODE_NAME PRIVATE_IP)
           # Sent over stdin, never on a command line.
           for name in "${names[@]}"; do
             printf '%s=%s\n' "$name" "${!name}"
