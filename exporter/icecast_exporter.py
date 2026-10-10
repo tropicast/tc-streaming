@@ -109,7 +109,7 @@ def stream_start(source):
 
 
 def source_bitrate(source):
-    """The declared bitrate, or the average incoming rate once the source ran 10 s; 0 if unknown."""
+    """The declared bitrate, or the average incoming rate once the source ran 30 s; 0 if unknown."""
     declared = number(source.findtext("bitrate"))
     if declared <= 0:
         match = re.search(r"(?:^|;)\s*(?:ice-)?bitrate=(\d+)", source.findtext("audio_info") or "")
@@ -118,7 +118,8 @@ def source_bitrate(source):
         return declared
     started = stream_start(source)
     seconds = time.time() - started if started else 0
-    if seconds < 10:
+    # Earlier the whole-second start time and connection setup skew the average.
+    if seconds < 30:
         return 0
     return round(number(source.findtext("total_bytes_read")) * 8 / 1000 / seconds, 1)
 
