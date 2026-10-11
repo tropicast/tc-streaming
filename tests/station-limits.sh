@@ -30,7 +30,11 @@ write_limits() {
     # $1: station 42's listener cap. Overwrites in place for the bind mount.
     cat >"$stations" <<JSON
 {"default": {"max_listeners": 3},
- "stations": {"42": {"plan": "free", "max_listeners": $1, "max_bitrate_kbps": 64, "formats": ["mp3"]}}}
+ "stations": {"42": {"plan": "free", "max_listeners": $1, "max_bitrate_kbps": 64, "formats": ["mp3"],
+                     "directory": {"listed": true, "name": "Radio 42", "genre": "salegy", "country_code": "MG",
+                                   "language_codes": "mg,fr", "homepage": "https://radio42.example",
+                                   "logo": "https://radio42.example/logo.png",
+                                   "main_stream_url": "https://listen.example/stations/42/live.mp3"}}}}
 JSON
 }
 write_limits 2
@@ -110,5 +114,15 @@ check "reload keeps live listeners (b)" yes "$([[ $(size b) -gt $before_b ]] && 
 listen f /stations/42/live.mp3
 sleep 2
 check "after reload, station 42 accepts a third listener" yes "$([[ $(size f) -gt 0 ]] && echo yes || echo no)"
+
+# Directory metadata (tc-dashboard#13): headers a directory reads from the stream.
+headers=$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/42/live.mp3" | tr -d '\r' || true)
+header() { grep -i "^$1:" <<<"$headers" | head -n 1 | cut -d' ' -f2-; }
+check "listed station: icy-index-metadata" 1 "$(header icy-index-metadata)"
+check "listed station: icy-name from the control plane" "Radio 42" "$(header icy-name)"
+check "listed station: icy-genre" salegy "$(header icy-genre)"
+check "listed station: icy-country-code" MG "$(header icy-country-code)"
+check "listed station: icy-logo" https://radio42.example/logo.png "$(header icy-logo)"
+check "unlisted station 77: no directory headers" "" "$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/77/live.mp3" | tr -d '\r' | grep -i '^icy-index-metadata' || true)"
 
 exit "$failures"

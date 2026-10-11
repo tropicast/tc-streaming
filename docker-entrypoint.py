@@ -14,6 +14,12 @@ RUNTIME_CONFIG = Path("/run/icecast/icecast.xml")
 STATIONS_FILE = Path(os.environ.get("ICECAST_STATIONS_FILE", "/etc/icecast/stations.json"))
 STATION_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 FORMATS = ("mp3", "opus")
+# Directory metadata (tc-dashboard#13): mount settings, and the "icy" v2 headers
+# directories such as RadioBrowser read from the stream to refresh a listing.
+DIRECTORY_TEXT = {"name": 400, "description": 512, "genre": 256}
+DIRECTORY_URLS = ("homepage", "logo", "main_stream_url")
+COUNTRY = re.compile(r"^[A-Z]{2}$")
+LANGUAGES = re.compile(r"^[a-z]{2,3}(,[a-z]{2,3})*$")
 
 
 def password(name):
@@ -80,7 +86,61 @@ def load_stations():
         for fmt in limits.get("formats", FORMATS):
             if fmt not in FORMATS:
                 sys.exit(f"{STATIONS_FILE}: station {station_id} has unknown format {fmt!r}")
+        if "directory" in limits:
+            check_directory(station_id, limits["directory"])
     return {"default": default, "stations": stations}
+
+
+def check_directory(station_id, directory):
+    """Directory metadata is public text and URLs: reject anything else."""
+    where = f"{STATIONS_FILE}: station {station_id} directory"
+    if not isinstance(directory, dict) or not isinstance(directory.get("listed"), bool):
+        sys.exit(f"{where} needs a boolean 'listed'")
+    for key, value in directory.items():
+        if key == "listed":
+            continue
+        if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+            sys.exit(f"{where}: {key} must be text without control characters")
+        if key in DIRECTORY_TEXT:
+            if len(value) > DIRECTORY_TEXT[key]:
+                sys.exit(f"{where}: {key} is longer than {DIRECTORY_TEXT[key]}")
+        elif key in DIRECTORY_URLS:
+            if not re.match(r"^https?://[^\s]+$", value) or len(value) > 512:
+                sys.exit(f"{where}: {key} must be an http(s) URL")
+        elif key == "country_code":
+            if not COUNTRY.match(value):
+                sys.exit(f"{where}: country_code must be two capital letters")
+        elif key == "language_codes":
+            if not LANGUAGES.match(value):
+                sys.exit(f"{where}: language_codes must be comma-separated ISO 639 codes")
+        else:
+            sys.exit(f"{where}: unknown key {key!r}")
+
+
+def directory_settings(mount, directory):
+    """Stream identity and directory headers of a listed station.
+
+    Listed: icy-index-metadata 1 asks directories to update the listing from
+    these headers. They come before any the source sends, and parsers read
+    the first one, so the control plane's values win; <stream-name> also
+    replaces the name a source sends, so a repeated icy-name matches.
+    Delisted (listed false): icy-do-not-index 1 asks directories to drop it.
+    """
+    headers = {"icy-version": "2", "icy-index-metadata": "1"}
+    if directory["listed"]:
+        if directory.get("name"):
+            ET.SubElement(mount, "stream-name").text = directory["name"]
+        for key, header in (("name", "icy-name"), ("description", "icy-description"), ("genre", "icy-genre"),
+                            ("homepage", "icy-url"), ("country_code", "icy-country-code"),
+                            ("language_codes", "icy-language-codes"), ("logo", "icy-logo"),
+                            ("main_stream_url", "icy-main-stream-url")):
+            if directory.get(key):
+                headers[header] = directory[key]
+    else:
+        headers["icy-do-not-index"] = "1"
+    http_headers = ET.SubElement(mount, "http-headers")
+    for name, value in headers.items():
+        ET.SubElement(http_headers, "header", {"name": name, "value": value})
 
 
 def apply_station_limits(tree, stations):
@@ -112,6 +172,8 @@ def apply_station_limits(tree, stations):
             mount = ET.Element("mount", {"type": "normal"})
             ET.SubElement(mount, "mount-name").text = f"/stations/{station_id}/live.{fmt}"
             ET.SubElement(mount, "max-listeners").text = str(limits["max_listeners"])
+            if "directory" in limits:
+                directory_settings(mount, limits["directory"])
             mount.append(copy.deepcopy(auth))
             root.insert(position, mount)
             position += 1

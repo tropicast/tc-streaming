@@ -74,6 +74,16 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   of the source authentication. `docker-entrypoint.py reload-stations`
   re-renders them and reloads Icecast with `SIGHUP`: live listeners and
   sources stay connected.
+- `directory` (optional, tc-dashboard#13): public metadata of a station
+  listed in directories such as RadioBrowser: `listed`, `name`,
+  `description`, `genre`, `homepage`, `logo`, `country_code`,
+  `language_codes`, `main_stream_url`. When listed, the station's mounts send
+  `icy-version: 2`, `icy-index-metadata: 1` and the matching `icy-*` headers,
+  which directories read to update their listing (RadioBrowser has no edit
+  API). These headers come before any the source sends, so the control
+  plane's values win. With `"listed": false` the mounts send
+  `icy-do-not-index: 1` instead. Values are checked: text without control
+  characters, http(s) URLs, a two-letter country code, ISO 639 language codes.
 - Capacity planning (which station goes on which node, refusing a full
   node) stays in the control plane; this repository only applies the
   limits. Icecast's global `<sources>` limit (50) is the hard ceiling.
