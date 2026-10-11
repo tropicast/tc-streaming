@@ -26,6 +26,7 @@ trap cleanup EXIT
 
 secret42=$(openssl rand -hex 16)
 secret77=$(openssl rand -hex 16)
+secret99=$(openssl rand -hex 16)
 write_limits() {
     # $1: station 42's listener cap. Overwrites in place for the bind mount.
     cat >"$stations" <<JSON
@@ -34,7 +35,8 @@ write_limits() {
                      "directory": {"listed": true, "name": "Radio 42", "genre": "salegy", "country_code": "MG",
                                    "language_codes": "mg,fr", "homepage": "https://radio42.example",
                                    "logo": "https://radio42.example/logo.png",
-                                   "main_stream_url": "https://listen.example/stations/42/live.mp3"}}}}
+                                   "main_stream_url": "https://listen.example/stations/42/live.mp3"}},
+              "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}}}}
 JSON
 }
 write_limits 2
@@ -44,7 +46,7 @@ ICECAST_ADMIN_PASSWORD=$(openssl rand -hex 24)
 ICECAST_SOURCE_AUTH_USER=icecast
 ICECAST_SOURCE_AUTH_PASSWORD=$(openssl rand -hex 24)
 ICECAST_PORT=$port
-STUB_STATIONS=42:$secret42,77:$secret77
+STUB_STATIONS=42:$secret42,77:$secret77,99:$secret99
 STATIONS_JSON=$stations
 LISTEN_HOST=listen.localhost
 INGEST_HOST=ingest.localhost
@@ -123,6 +125,14 @@ check "listed station: icy-name from the control plane" "Radio 42" "$(header icy
 check "listed station: icy-genre" salegy "$(header icy-genre)"
 check "listed station: icy-country-code" MG "$(header icy-country-code)"
 check "listed station: icy-logo" https://radio42.example/logo.png "$(header icy-logo)"
-check "unlisted station 77: no directory headers" "" "$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/77/live.mp3" | tr -d '\r' | grep -i '^icy-index-metadata' || true)"
+
+# Delisted station 99 (listed false), with room under its cap: only the opt-out.
+publish "99:$secret99" /stations/99/live.mp3 30 >/dev/null &
+pids+=($!)
+sleep 3
+delisted=$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/99/live.mp3" | tr -d '\r' || true)
+check "delisted station: answers (not at its cap)" 200 "$(head -n 1 <<<"$delisted" | cut -d' ' -f2)"
+check "delisted station: icy-do-not-index" 1 "$(grep -i '^icy-do-not-index:' <<<"$delisted" | cut -d' ' -f2-)"
+check "delisted station: no listed-only headers" "" "$(grep -iE '^icy-(country-code|logo|language-codes|main-stream-url):' <<<"$delisted" || true)"
 
 exit "$failures"

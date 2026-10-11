@@ -6,6 +6,7 @@ import re
 import secrets
 import signal
 import sys
+import unicodedata
 import xml.etree.ElementTree as ET
 
 RUNTIME_CONFIG = Path("/run/icecast/icecast.xml")
@@ -19,7 +20,14 @@ FORMATS = ("mp3", "opus")
 DIRECTORY_TEXT = {"name": 400, "description": 512, "genre": 256}
 DIRECTORY_URLS = ("homepage", "logo", "main_stream_url")
 COUNTRY = re.compile(r"^[A-Z]{2}$")
-LANGUAGES = re.compile(r"^[a-z]{2,3}(,[a-z]{2,3})*$")
+# ISO 639-1 (two-letter) language codes: what directories and the control plane use.
+ISO_639_1 = frozenset("""
+aa ab ae af ak am an ar as av ay az ba be bg bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de dv dz ee el en eo es
+et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it iu ja jv ka kg ki kj
+kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv
+ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti
+tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu
+""".split())
 
 
 def password(name):
@@ -99,7 +107,8 @@ def check_directory(station_id, directory):
     for key, value in directory.items():
         if key == "listed":
             continue
-        if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+        # Cc covers C0, DEL and C1 controls; Zl/Zp are line and paragraph separators.
+        if not isinstance(value, str) or any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in value):
             sys.exit(f"{where}: {key} must be text without control characters")
         if key in DIRECTORY_TEXT:
             if len(value) > DIRECTORY_TEXT[key]:
@@ -111,8 +120,8 @@ def check_directory(station_id, directory):
             if not COUNTRY.match(value):
                 sys.exit(f"{where}: country_code must be two capital letters")
         elif key == "language_codes":
-            if not LANGUAGES.match(value):
-                sys.exit(f"{where}: language_codes must be comma-separated ISO 639 codes")
+            if not all(code in ISO_639_1 for code in value.split(",")):
+                sys.exit(f"{where}: language_codes must be comma-separated ISO 639-1 codes")
         else:
             sys.exit(f"{where}: unknown key {key!r}")
 
@@ -125,6 +134,9 @@ def directory_settings(mount, directory):
     the first one, so the control plane's values win; <stream-name> also
     replaces the name a source sends, so a repeated icy-name matches.
     Delisted (listed false): icy-do-not-index 1 asks directories to drop it.
+    It keeps icy-index-metadata 1 on purpose: RadioBrowser honours do-not-index
+    only together with it (its checker skips a stream when both are set, then
+    marks the entry broken), and ignores do-not-index alone.
     """
     headers = {"icy-version": "2", "icy-index-metadata": "1"}
     if directory["listed"]:

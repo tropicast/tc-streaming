@@ -82,8 +82,11 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   which directories read to update their listing (RadioBrowser has no edit
   API). These headers come before any the source sends, so the control
   plane's values win. With `"listed": false` the mounts send
-  `icy-do-not-index: 1` instead. Values are checked: text without control
-  characters, http(s) URLs, a two-letter country code, ISO 639 language codes.
+  `icy-do-not-index: 1` instead, with `icy-index-metadata: 1`: RadioBrowser
+  honours the opt-out only with both, then marks the entry broken, which hides
+  it from most apps. Values are checked: text without control characters
+  (C0, DEL, C1, line separators), http(s) URLs, a two-letter country code,
+  ISO 639-1 language codes.
 - Capacity planning (which station goes on which node, refusing a full
   node) stays in the control plane; this repository only applies the
   limits. Icecast's global `<sources>` limit (50) is the hard ceiling.
