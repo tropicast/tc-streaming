@@ -47,7 +47,7 @@ services:
 
   # Development and CI only: stands in for the control-plane auth endpoint.
   auth-stub:
-    image: python:3.12-slim
+    image: python:3.14-slim
     command: ["python3", "-u", "/srv/server.py"]
     volumes:
       - ./auth-stub/server.py:/srv/server.py:ro
@@ -62,7 +62,7 @@ services:
   # Reads Icecast's admin stats and the Hetzner traffic counters.
   icecast-exporter:
     profiles: ["monitoring"]
-    image: python:3.12-slim
+    image: python:3.14-slim
     restart: unless-stopped
     command: ["python3", "-u", "/srv/icecast_exporter.py"]
     volumes:

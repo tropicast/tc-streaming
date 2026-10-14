@@ -53,7 +53,7 @@ services:
   # real customers.
   auth-stub:
     profiles: ["stub"]
-    image: python:3.12-slim
+    image: python:3.14-slim
     restart: unless-stopped
     command: ["python3", "-u", "/srv/server.py"]
     volumes:
@@ -69,7 +69,7 @@ services:
   # Reads Icecast's admin stats and the Hetzner traffic counters.
   icecast-exporter:
     profiles: ["monitoring"]
-    image: python:3.12-slim
+    image: python:3.14-slim
     restart: unless-stopped
     command: ["python3", "-u", "/srv/icecast_exporter.py"]
     volumes:
