@@ -13,6 +13,8 @@ Environment:
   ICECAST_ADMIN_PASSWORD
   HCLOUD_READ_TOKEN     optional, read-only Hetzner Cloud API token
   HCLOUD_SERVER_NAME    server to read traffic for, e.g. tc-stream-1
+  TC_STREAMING_VERSION  release deployed on the node (deploy.sh sets it), default 0.0.0
+  TC_STREAMING_REVISION git commit deployed on the node, default unknown
 """
 
 import base64
@@ -33,6 +35,8 @@ ADMIN_AUTH = "Basic " + base64.b64encode(
 HCLOUD_TOKEN = os.environ.get("HCLOUD_READ_TOKEN", "")
 HCLOUD_SERVER = os.environ.get("HCLOUD_SERVER_NAME", "")
 HCLOUD_API = os.environ.get("HCLOUD_API", "https://api.hetzner.cloud/v1").rstrip("/")
+VERSION = os.environ.get("TC_STREAMING_VERSION") or "0.0.0"
+REVISION = os.environ.get("TC_STREAMING_REVISION") or "unknown"
 HCLOUD_TTL = 300  # seconds; Hetzner updates traffic counters slowly
 STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/live\.(?P<format>mp3|opus)$")
 
@@ -48,6 +52,14 @@ def number(text, default=0.0):
         return float(text)
     except (TypeError, ValueError):
         return default
+
+
+def build_lines():
+    """Which release runs on the node (#59): always 1, the labels carry the version."""
+    return [
+        "# TYPE tc_streaming_build_info gauge",
+        f'tc_streaming_build_info{{version="{escape(VERSION)}",revision="{escape(REVISION)}"}} 1',
+    ]
 
 
 def icecast_lines():
@@ -163,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = ("\n".join(icecast_lines() + hcloud_lines()) + "\n").encode()
+        body = ("\n".join(build_lines() + icecast_lines() + hcloud_lines()) + "\n").encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
         self.send_header("Content-Length", str(len(body)))

@@ -1,0 +1,26 @@
+# Changelog
+
+All notable changes to the streaming plane. Format: [Keep a Changelog](https://keepachangelog.com/);
+versions follow [Semantic Versioning](https://semver.org/).
+
+When releasing, rename `Unreleased` to the version (for example `## [0.2.0] - 2026-11-01`) and add a
+new empty `Unreleased` section. The release workflow requires that section and publishes it above the
+auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#releasing).
+
+## [Unreleased]
+
+### Added
+
+- Release workflow: a `v*` tag checks the changelog, adds version tags to the Icecast and Caddy images of that commit (same digests, nothing restarts) and drafts a GitHub Release. The version comes from the tag only.
+- Deploy a release by tag (`ref=v0.1.0`); the exporter reports the deployed release as `tc_streaming_build_info`, shown in the dashboard's **Release** panel.
+- Icecast 2.5.0 image built from pinned sources, running as non-root, with passwords kept out of the environment.
+- Per-station mounts for MP3 and Ogg Opus, with listener caps, formats and bitrates from `stations.json`, reloaded without dropping listeners.
+- Source authentication against the control plane; no shared broadcast password.
+- Caddy TLS gateway: HTTP proxy for listeners, layer4 pass-through for sources, Let's Encrypt certificates.
+- RadioBrowser listing metadata (`icy-*` headers) per station.
+- Monitoring: exporter, Grafana Alloy, alert rules, dashboard, and Icecast logs in Grafana Cloud Logs.
+- Hetzner node with Terraform, hardening with Ansible, and a manual deploy workflow with rollback.
+
+### Fixed
+
+- Pro-plan listener caps above Icecast's maximum (16384) are lowered instead of being ignored.

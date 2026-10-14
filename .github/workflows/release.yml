@@ -1,0 +1,160 @@
+name: Release
+
+# Push a tag such as v0.1.0 (or v0.1.0-rc.1) on a commit that is on main (#59). The tag is the only place
+# the version is set.
+#   ghcr.io/tropicast/icecast:<version>  and  ghcr.io/tropicast/caddy:<version>
+# are the images main already built for that commit (sha-<commit>), tagged again: the same digests, so
+# nothing is rebuilt. :latest moves for non-pre-release tags only. Then a DRAFT GitHub Release is created
+# with the CHANGELOG.md section as notes. Deploying stays manual: run deploy.yml with ref=v<version>; the
+# exporter then reports the version (tc_streaming_build_info).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      icecast_tag: ${{ steps.images.outputs.icecast_tag }}
+      caddy_tag: ${{ steps.images.outputs.caddy_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tag format, branch and changelog
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$tag' must look like v1.2.3 or v1.2.3-rc.1."
+            exit 1
+          fi
+          core="${BASH_REMATCH[1]}"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::Tag $tag is not on main."; exit 1; }
+          # Pre-release tags use their base version's section.
+          grep -Eq "^## \[${core//./\\.}\]" CHANGELOG.md ||
+            { echo "::error::CHANGELOG.md has no '## [$core]' section. Rename Unreleased to it before tagging."; exit 1; }
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${BASH_REMATCH[2]}" ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >> "$GITHUB_OUTPUT"
+
+      # The same rule as deploy.yml ("Resolve the release"): each image is the one of the last commit
+      # that changed it.
+      - name: Resolve the images
+        id: images
+        run: |
+          icecast_sha=$(git log -1 --first-parent --format=%H "$GITHUB_SHA" -- \
+            Dockerfile docker-entrypoint.py icecast.xml .dockerignore)
+          caddy_sha=$(git log -1 --first-parent --format=%H "$GITHUB_SHA" -- \
+            caddy/Dockerfile caddy/.dockerignore)
+          echo "icecast_tag=sha-$icecast_sha" >> "$GITHUB_OUTPUT"
+          echo "caddy_tag=sha-$caddy_sha" >> "$GITHUB_OUTPUT"
+
+      - name: The exporter reports the version
+        env:
+          TC_STREAMING_VERSION: ${{ steps.version.outputs.version }}
+          TC_STREAMING_REVISION: ${{ github.sha }}
+          ICECAST_URL: http://127.0.0.1:9
+        run: |
+          python3 -I exporter/icecast_exporter.py &
+          pid=$!
+          trap 'kill $pid' EXIT
+          expected="tc_streaming_build_info{version=\"$TC_STREAMING_VERSION\",revision=\"$GITHUB_SHA\"} 1"
+          for _ in $(seq 1 20); do
+            metrics=$(curl -fs http://127.0.0.1:9100/metrics) && break
+            sleep 0.5
+          done
+          grep -qxF "$expected" <<< "${metrics:-}" || { echo "::error::The exporter does not report: $expected"; exit 1; }
+          echo "$expected"
+
+  images:
+    name: Tag the images
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      LATEST: ${{ needs.verify.outputs.prerelease == 'false' }}
+      ICECAST_TAG: ${{ needs.verify.outputs.icecast_tag }}
+      CADDY_TAG: ${{ needs.verify.outputs.caddy_tag }}
+    steps:
+      # Per-job Docker config: keep registry logins and buildx state in this job.
+      - name: Isolate the Docker config
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
+
+      # crane adds a tag to an existing manifest without rewriting it, so the digest stays the same
+      # ("docker buildx imagetools create" re-creates the manifest: a new digest).
+      - uses: imjasonh/setup-crane@v0.4
+
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: crane auth login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+
+      - name: Add the version tags
+        run: |
+          retag() {
+            local image=ghcr.io/tropicast/$1 source_tag=$2
+            # A tag pushed right after a merge may race the image build of main: wait up to 30 minutes.
+            for _ in $(seq 1 60); do
+              crane digest "$image:$source_tag" >/dev/null 2>&1 && break
+              echo "waiting for $image:$source_tag"
+              sleep 30
+            done
+            local digest
+            digest=$(crane digest "$image:$source_tag") ||
+              { echo "::error::$image:$source_tag does not exist. Did its image workflow fail on main?"; exit 1; }
+            crane tag "$image:$source_tag" "$VERSION"
+            if [[ $LATEST == true ]]; then crane tag "$image:$source_tag" latest; fi
+            [[ $(crane digest "$image:$VERSION") == "$digest" ]] ||
+              { echo "::error::$image:$VERSION is not the same image as $source_tag."; exit 1; }
+            echo "$image:$VERSION = $image:$source_tag ($digest)"
+          }
+          retag icecast "$ICECAST_TAG"
+          retag caddy "$CADDY_TAG"
+
+  publish:
+    name: Draft GitHub Release
+    needs: [verify, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+          ICECAST_TAG: ${{ needs.verify.outputs.icecast_tag }}
+          CADDY_TAG: ${{ needs.verify.outputs.caddy_tag }}
+        run: |
+          core="${VERSION%%-*}"
+          # The CHANGELOG.md section for this version, then GitHub's list of merged PRs (.github/release.yml).
+          awk -v v="$core" '/^## \[/ { on = index($0, "[" v "]") > 0; next } on' CHANGELOG.md > notes.md
+          {
+            cat notes.md
+            echo
+            echo "**Images:** \`ghcr.io/tropicast/icecast:$VERSION\` (= \`$ICECAST_TAG\`), \`ghcr.io/tropicast/caddy:$VERSION\` (= \`$CADDY_TAG\`)"
+            echo
+            echo "Deploy: run the **Deploy** workflow with \`ref=$GITHUB_REF_NAME\`."
+          } > release-notes.md
+          prerelease=()
+          if [[ "$PRERELEASE" == true ]]; then prerelease=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft "${prerelease[@]}" \
+            --title "Tropicast Streaming $VERSION" --verify-tag \
+            --notes-file release-notes.md --generate-notes

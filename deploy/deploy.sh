@@ -14,7 +14,8 @@
 #   auth-stub/server.py  temporary auth stub (profile "stub")
 #   stations.json        station limits (#8), from the control plane
 #   releases/<sha>/      copy of each deployed bundle, for rollback; its
-#                        release.env holds ICECAST_IMAGE_TAG and CADDY_IMAGE_TAG
+#                        release.env holds ICECAST_IMAGE_TAG, CADDY_IMAGE_TAG
+#                        and RELEASE_VERSION
 #   CURRENT, PREVIOUS    "<git-sha> <icecast-image-tag>" of the active and
 #                        prior release
 #
@@ -54,16 +55,19 @@ install_bundle() {
 # only pin the Icecast tag (their compose file uses the stock Caddy image).
 load_release() {
     local sha=$1 fallback_tag=${2:-}
-    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG
+    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG TC_STREAMING_VERSION
     if [[ -f releases/$sha/release.env ]]; then
         ICECAST_IMAGE_TAG=$(sed -n 's/^ICECAST_IMAGE_TAG=//p' "releases/$sha/release.env")
         CADDY_IMAGE_TAG=$(sed -n 's/^CADDY_IMAGE_TAG=//p' "releases/$sha/release.env")
+        # The release version (#59), shown by the exporter; releases before it have none.
+        TC_STREAMING_VERSION=$(sed -n 's/^RELEASE_VERSION=//p' "releases/$sha/release.env")
         export CADDY_IMAGE_TAG
     else
         ICECAST_IMAGE_TAG=$fallback_tag
     fi
     [[ -n $ICECAST_IMAGE_TAG ]] || { log "release $sha has no image tags"; exit 1; }
     export ICECAST_IMAGE_TAG
+    export TC_STREAMING_VERSION=${TC_STREAMING_VERSION:-0.0.0} TC_STREAMING_REVISION=$sha
 }
 
 start() {
@@ -168,7 +172,7 @@ activate)
     install_bundle "releases/$sha"
     start
     record "$sha" "$ICECAST_IMAGE_TAG"
-    log "active: $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
+    log "active: $TC_STREAMING_VERSION $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
     ;;
 rollback)
     [[ -f PREVIOUS ]] || { log "no previous release recorded"; exit 1; }
@@ -179,7 +183,7 @@ rollback)
     install_bundle "releases/$sha"
     SKIP_PULL=${SKIP_PULL:-1} start
     record "$sha" "$ICECAST_IMAGE_TAG"
-    log "active: $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
+    log "active: $TC_STREAMING_VERSION $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
     ;;
 compose)
     if [[ -f CURRENT ]]; then
@@ -210,6 +214,7 @@ status)
     if [[ -f CURRENT ]]; then
         read -r sha image_tag < CURRENT
         load_release "$sha" "$image_tag"
+        echo "version:  $TC_STREAMING_VERSION"
     fi
     compose ps
     ;;

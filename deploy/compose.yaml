@@ -83,6 +83,9 @@ services:
       ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:-}
       HCLOUD_READ_TOKEN: ${HCLOUD_READ_TOKEN:-}
       HCLOUD_SERVER_NAME: ${NODE_NAME:-}
+      # Release on the node (#59): deploy.sh exports them from release.env.
+      TC_STREAMING_VERSION: ${TC_STREAMING_VERSION:-0.0.0}
+      TC_STREAMING_REVISION: ${TC_STREAMING_REVISION:-unknown}
 
   # Docker API for Alloy's log collection (#46). Only these GET calls pass:
   # ping/version, container list, container inspect and logs, network list.

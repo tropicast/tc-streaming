@@ -90,23 +90,26 @@ workflows and what they run: [docs/how-to/build-and-test.md](docs/how-to/build-a
 
 ## Documentation
 
-| Topic                                                             | Covers                                                             |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| [Icecast](docs/reference/icecast.md)                              | Image, production config, station limits, Opus mounts, source auth |
-| [TLS gateway](docs/reference/gateway.md)                          | Caddy routing for listen and ingest, headers, certificates         |
-| [Source auth contract](docs/source-auth.md)                       | The endpoint the control plane implements                          |
-| [Infrastructure and operations](docs/reference/infrastructure.md) | Terraform node, Ansible hardening, deploy, monitoring              |
-| [Runbook](docs/runbook.md)                                        | First-time setup, deploys, rollbacks, restarts, incidents          |
-| [Provision with CI](docs/how-to/provision-hetzner-with-ci.md)     | Terraform from GitHub Actions                                      |
-| [Set up monitoring](docs/how-to/set-up-monitoring.md)             | Grafana Cloud metrics, logs, alerts and dashboard                  |
-| [Build and test](docs/how-to/build-and-test.md)                   | CI workflows, image tags, caches                                   |
-| [Load test](docs/load-test.md)                                    | Capacity of one node                                               |
+| Topic                                                             | Covers                                                               |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [Icecast](docs/reference/icecast.md)                              | Image, production config, station limits, Opus mounts, source auth   |
+| [TLS gateway](docs/reference/gateway.md)                          | Caddy routing for listen and ingest, headers, certificates           |
+| [Source auth contract](docs/source-auth.md)                       | The endpoint the control plane implements                            |
+| [Infrastructure and operations](docs/reference/infrastructure.md) | Terraform node, Ansible hardening, deploy, monitoring                |
+| [Runbook](docs/runbook.md)                                        | First-time setup, deploys, rollbacks, restarts, incidents            |
+| [Provision with CI](docs/how-to/provision-hetzner-with-ci.md)     | Terraform from GitHub Actions                                        |
+| [Set up monitoring](docs/how-to/set-up-monitoring.md)             | Grafana Cloud metrics, logs, alerts and dashboard                    |
+| [Build and test](docs/how-to/build-and-test.md)                   | CI workflows, image tags, caches                                     |
+| [Load test](docs/load-test.md)                                    | Capacity of one node                                                 |
+| [Changelog](CHANGELOG.md)                                         | Changes per release; releasing: [runbook](docs/runbook.md#releasing) |
 
 ## Contributing
 
 One issue, one branch (`feat/…`, `fix/…`, `docs/…`, `ci/…`) and one pull
 request. CI must pass before review. Each workflow runs only when the files it
-covers change.
+covers change. Add changes to the `Unreleased` section of
+[CHANGELOG.md](CHANGELOG.md); releases are tag-driven
+([Releasing](docs/runbook.md#releasing)).
 
 ## License
 

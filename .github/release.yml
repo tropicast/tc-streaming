@@ -1,0 +1,17 @@
+# Groups the auto-generated release notes (release.yml workflow, gh release create --generate-notes).
+changelog:
+  exclude:
+    labels: [skip-changelog]
+  categories:
+    - title: Features
+      labels: [enhancement]
+    - title: Fixes
+      labels: [bug]
+    - title: Infrastructure
+      labels: [infrastructure, terraform, docker_compose]
+    - title: Documentation
+      labels: [documentation]
+    - title: Dependencies
+      labels: [dependencies, github_actions]
+    - title: Other changes
+      labels: ["*"]

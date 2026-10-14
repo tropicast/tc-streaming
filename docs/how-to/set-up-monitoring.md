@@ -193,7 +193,11 @@ each query. Each must return `1`:
 icecast_up{instance="tc-stream-1"}
 up{job="node", instance="tc-stream-1"}
 hetzner_up
+tc_streaming_build_info{instance="tc-stream-1"}
 ```
+
+`tc_streaming_build_info` carries the deployed release in its `version` label
+(the dashboard's **Release** panel shows it).
 
 Then choose the Loki data source (named like `grafanacloud-<stack>-logs`)
 and run:

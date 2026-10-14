@@ -9,19 +9,21 @@ Every workflow runs only when the files it covers change, so a docs-only
 change runs nothing. A newer push to a pull request cancels its running
 checks; runs on `main` always finish.
 
-| Workflow                                          | Runs when                                          | Does                                                                                 |
-| ------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `image.yml`                                       | Icecast image files change (PR, `main`), `v*` tags | Build, health smoke test, Trivy. On `main`/tags, push `ghcr.io/tropicast/icecast`    |
-| `caddy-image.yml`                                 | `caddy/Dockerfile` changes (PR, `main`)            | Build, layer4 check, Trivy. On `main`, push `ghcr.io/tropicast/caddy`                |
-| `e2e.yml`                                         | Images, Compose, auth stub or tests change         | One job: builds both images once, runs `tests/source-auth.sh` and `tests/gateway.sh` |
-| `deploy-lint.yml`, `terraform.yml`, `ansible.yml` | Their own files change                             | Lint and validate                                                                    |
+| Workflow                                          | Runs when                                  | Does                                                                                 |
+| ------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `image.yml`                                       | Icecast image files change (PR, `main`)    | Build, health smoke test, Trivy. On `main`, push `ghcr.io/tropicast/icecast`         |
+| `caddy-image.yml`                                 | `caddy/Dockerfile` changes (PR, `main`)    | Build, layer4 check, Trivy. On `main`, push `ghcr.io/tropicast/caddy`                |
+| `e2e.yml`                                         | Images, Compose, auth stub or tests change | One job: builds both images once, runs `tests/source-auth.sh` and `tests/gateway.sh` |
+| `deploy-lint.yml`, `terraform.yml`, `ansible.yml` | Their own files change                     | Lint and validate                                                                    |
+| `release.yml`                                     | A `v*` tag is pushed                       | Checks the tag and changelog, adds version tags to the images, drafts the release    |
 
 Jobs run on GitHub-hosted `ubuntu-latest` runners. Workflows and tests use
 per-run image tags, Compose projects, ports and Docker config, so they never
 depend on what another job left behind.
 
-Images are tagged with the full git SHA (plus semver for Icecast tags); no
-`latest` tag is published. The `push` path filters of the two image
+Images are built with the full git SHA as their tag. A release
+([Releasing](../runbook.md#releasing)) adds `:<version>` (and `:latest` for
+non-pre-releases) to the same images, without rebuilding them. The `push` path filters of the two image
 workflows must match the path lists in `deploy.yml`, because a deploy uses
 the image of the last `main` commit that touched those paths.
 
