@@ -1,0 +1,75 @@
+# Dependency updates: weekly pull requests for the Dockerfiles' base images, the
+# Compose files' images, the Terraform provider, the Ansible lint toolchain and
+# the workflow actions. Minor and patch updates are grouped per ecosystem;
+# security updates come as soon as an advisory is published. Images named
+# inside scripts and workflow steps (tests/*.sh, CI) are not covered: bump them by hand.
+version: 2
+updates:
+  # Base images: the Caddy builder and runtime. debian:bookworm-slim is a codename
+  # tag that Dependabot does not move: a new Debian release is a planned upgrade.
+  - package-ecosystem: docker
+    directories: [/, /caddy]
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(docker)"
+    groups:
+      # caddy-builder and caddy must share one version: one PR for both.
+      caddy:
+        patterns: ["caddy"]
+
+  # Images in the Compose files: Alloy and the Python sidecars in production
+  # (deploy/compose.yaml) and locally (compose.yaml); Prometheus for the monitoring tests.
+  - package-ecosystem: docker-compose
+    directories: [/, /deploy, /tests]
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(compose)"
+    groups:
+      # The same images appear in compose.yaml and deploy/compose.yaml: keep them in step.
+      compose-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # Hetzner Cloud provider (versions.tf, .terraform.lock.hcl).
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(terraform)"
+
+  # Ansible lint toolchain (infra/ansible/requirements.txt). Dependabot has no
+  # Galaxy ecosystem; the playbook uses only ansible.builtin, so nothing else to track.
+  - package-ecosystem: pip
+    directory: /infra/ansible
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(ansible)"
+    groups:
+      ansible:
+        patterns: ["ansible-*"]
+
+  # Workflow actions: the deploy workflows hold production secrets.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]

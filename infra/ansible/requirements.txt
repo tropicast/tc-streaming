@@ -1,0 +1,5 @@
+# Lint toolchain for the playbook, pinned so Dependabot (pip) proposes upgrades
+# instead of CI picking up new rules unannounced. ansible-core is the engine
+# ansible-lint checks against; the playbook uses only ansible.builtin modules.
+ansible-lint==26.10.1
+ansible-core==2.21.5
