@@ -84,18 +84,27 @@ services:
       HCLOUD_READ_TOKEN: ${HCLOUD_READ_TOKEN:-}
       HCLOUD_SERVER_NAME: ${NODE_NAME:-}
 
-  # Read-only Docker API for Alloy's log collection (#46): only container
-  # and network listing and container logs (GET), no POST, no exec.
-  # Reachable only on the internal docker-api network, so Icecast and Caddy
-  # cannot talk to it.
+  # Docker API for Alloy's log collection (#46). Only these GET calls pass:
+  # ping/version, container list, container inspect and logs, network list.
+  # Everything else (exec, create, start, archive/export, any write) is
+  # refused. Inspect returns container environments, which Alloy can read
+  # from the host filesystem anyway (/host/root). Reachable only from Alloy,
+  # on the internal docker-api network.
   docker-socket-proxy:
     profiles: ["monitoring"]
-    image: tecnativa/docker-socket-proxy:v0.5.0
+    image: wollomatic/socket-proxy:1.13.1
     restart: unless-stopped
-    environment:
-      CONTAINERS: 1
-      NETWORKS: 1
-      POST: 0
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=alloy
+      - -allowGET=^(/v[0-9.]+)?/(_ping|version|containers/json|containers/[0-9a-f]+/(json|logs)|networks)$$
+      - -shutdowngracetime=5
+    # Root only to open the socket (owned by root:docker, whose GID differs
+    # per host); no capabilities, read-only filesystem.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -119,6 +128,11 @@ services:
       - /sys:/host/sys:ro
       - /:/host/root:ro
       - alloy-data:/var/lib/alloy/data
+    # Hide the host's /run, so Alloy cannot reach docker.sock or
+    # containerd.sock through /host/root and bypass docker-socket-proxy.
+    # The node exporter already skips /run mount points.
+    tmpfs:
+      - /host/root/run:ro,size=1m
     environment:
       GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:-}
       GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:-}

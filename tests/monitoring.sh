@@ -124,12 +124,31 @@ check "Icecast startup is an error-log line at level info" 1 \
 leak=leak-$(openssl rand -hex 8)
 compose exec -T icecast sh -c "printf '%s\\n' \
     '[2026-01-01  00:00:00] WARN test/redact url http://u:$leak@h/x?pass=$leak&mount=/a' \
-    '[2026-01-01  00:00:00] WARN test/redact header Authorization: Basic $leak' >/proc/1/fd/1"
-check "redaction test lines arrive" 2 "$(logs_until "$(icecast_logs) |= \"test/redact\"" 2)"
+    '[2026-01-01  00:00:00] WARN test/redact empty user, slash icecast://:$leak/x@h/ src://s:ab/$leak@h/' \
+    '[2026-01-01  00:00:00] WARN test/redact prefixed access_token=$leak api_key=$leak client_secret=$leak ICECAST_ADMIN_PASSWORD=$leak' \
+    '[2026-01-01  00:00:00] WARN test/redact json {\"password\": \"$leak\", \"x-auth-token\":\"$leak\"}' \
+    '[2026-01-01  00:00:00] WARN test/redact xml <source-password>$leak</source-password>' \
+    '[2026-01-01  00:00:00] WARN test/redact basic Authorization: Basic $leak' \
+    '[2026-01-01  00:00:00] WARN test/redact digest Authorization: Digest username=\"admin\", response=\"$leak\"' \
+    '[2026-01-01  00:00:00] WARN test/redact token Authorization: Token $leak' >/proc/1/fd/1"
+check "redaction test lines arrive" 8 "$(logs_until "$(icecast_logs) |= \"test/redact\"" 8)"
 check "no secret reaches Loki" 0 "$(logs_count "$(icecast_logs) |= \"$leak\"")"
 # Several healthchecks and exporter scrapes ran by now.
 check "healthcheck and exporter polling are not shipped" 0 \
     "$(logs_count "$(icecast_logs) |~ \"status-json|admin/stats\"")"
+
+# Alloy reaches Docker only through the proxy, and the proxy only lets
+# through the GET calls log collection needs.
+check "Alloy cannot see the host's docker.sock" no \
+    "$(compose exec -T alloy sh -c 'test -e /host/root/run/docker.sock || test -e /host/root/var/run/docker.sock && echo yes || echo no')"
+icecast_id=$(compose ps -q icecast)
+proxy() {  # proxy <method> <path>: HTTP status through docker-socket-proxy, as Alloy
+    docker run --rm --network "container:$(compose ps -q alloy)" curlimages/curl:8.23.0 \
+        -s -o /dev/null -w '%{http_code}' -X "$1" "http://docker-socket-proxy:2375$2"
+}
+check "proxy allows container logs" 200 "$(proxy GET "/v1.43/containers/$icecast_id/logs?stdout=1&tail=1")"
+check "proxy refuses reading container files" 403 "$(proxy GET "/v1.43/containers/$icecast_id/archive?path=/etc/passwd")"
+check "proxy refuses exec" 405 "$(proxy POST "/v1.43/containers/$icecast_id/exec")"
 
 kill "$listener" "$publisher" 2>/dev/null || true
 check "listener disconnect is an access line" 1 \

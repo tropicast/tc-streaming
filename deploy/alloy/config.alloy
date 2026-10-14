@@ -68,7 +68,8 @@ prometheus.remote_write "cloud" {
 // Icecast logs (#46). Icecast writes its error log and its access log to
 // stdout (icecast.xml); Docker keeps them only until rotation or until the
 // container is recreated. Alloy reads them through docker-socket-proxy
-// (read-only Docker API, compose.yaml), never through the raw socket.
+// (GET-only allowlist, compose.yaml); the host's /run, with the raw socket,
+// is hidden from Alloy.
 
 discovery.docker "icecast" {
   host             = "tcp://docker-socket-proxy:2375"
@@ -126,20 +127,32 @@ loki.process "icecast" {
   }
 
   // Secrets never leave the node. Icecast 2.5 strips query strings from the
-  // access log, but other lines may carry a URL or a header verbatim.
-  // Each capture group is replaced.
+  // access log, but other lines may carry a URL, a header, JSON or XML
+  // verbatim. Each capture group is replaced.
+  // key=value, key: value, "key":"value" for any *pass*, *token*, *secret*,
+  // *key* name (access_token, api_key, ICECAST_ADMIN_PASSWORD...).
   stage.replace {
-    expression = `(?i)\b(?:pass|password|passwd|token|secret|key)=([^&\s"]+)`
+    expression = `(?i)[a-z0-9_.-]*(?:pass(?:word|wd)?|token|secret|key)["']?\s*[:=]\s*["']?([^&\s"'<>,;]+)`
     replace    = "REDACTED"
   }
 
+  // <source-password>value</source-password> and similar XML elements.
   stage.replace {
-    expression = `://[^/\s:@]+:([^@/\s]+)@`
+    expression = `(?i)<[a-z0-9_-]*(?:pass(?:word|wd)?|token|secret|key)[a-z0-9_-]*>([^<]+)<`
     replace    = "REDACTED"
   }
 
+  // scheme://user:password@host, also with an empty user or a "/" in the
+  // password.
   stage.replace {
-    expression = `(?i)authorization:\s*(?:basic\s+|bearer\s+)?([^\s"]+)`
+    expression = `(?i)[a-z][a-z0-9+.-]*://[^/\s@:]*:([^\s@]+)@`
+    replace    = "REDACTED"
+  }
+
+  // Everything after "Authorization", whatever the scheme (Basic, Bearer,
+  // Digest with quoted fields...), up to the end of the line.
+  stage.replace {
+    expression = `(?i)authorization["']?\s*[:=]\s*(.+)`
     replace    = "REDACTED"
   }
 
@@ -149,6 +162,11 @@ loki.process "icecast" {
 
     stage.regex {
       expression = `^\[[^\]]+\] (?P<icecast_level>[A-Z]{4}) (?P<module>[^/ ]+)/(?P<function>\S+) `
+    }
+
+    // Mount named in the message, e.g. "/stations/42/live.mp3".
+    stage.regex {
+      expression = `(?P<mount>/stations/(?P<station>[^/\s"]+)/[^\s"]+)`
     }
 
     stage.template {
@@ -170,6 +188,12 @@ loki.process "icecast" {
       expression = `^\S+ \S+ (?P<user>\S+) \[[^\]]+\] "(?P<method>[A-Z]+) (?P<path>[^\s"]+)[^"]*" (?P<status>(?P<status_class>\d)\d{2}) `
     }
 
+    // Mount from the request path only, never from the Referer.
+    stage.regex {
+      source     = "path"
+      expression = `^(?P<mount>/stations/(?P<station>[^/?]+)/[^?]+)`
+    }
+
     // 4xx (rejected source, wrong admin password) shows as a warning.
     stage.template {
       source   = "level"
@@ -179,11 +203,6 @@ loki.process "icecast" {
     stage.static_labels {
       values = {log_type = "access"}
     }
-  }
-
-  // Mount and station from either log, e.g. "/stations/42/live.mp3".
-  stage.regex {
-    expression = `(?P<mount>/stations/(?P<station>[^/\s"]+)/[^\s"]+)`
   }
 
   stage.labels {

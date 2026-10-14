@@ -318,7 +318,9 @@ rollbacks, what restarts what, and incidents.
 monthly traffic) and Grafana Alloy (`deploy/alloy/config.alloy`) run on the
 node with the Compose profile `monitoring` and push to Grafana Cloud.
 Alloy also ships Icecast's logs to Grafana Cloud Logs (#46), reading them
-through a read-only Docker API proxy (`docker-socket-proxy`).
+through `docker-socket-proxy`, which only lets through the read calls log
+collection needs. The host's `/run` (with `docker.sock`) is hidden from
+Alloy, so it cannot go around the proxy.
 Alert rules (`monitoring/rules.yaml`, unit-tested with
 `monitoring/rules.test.yaml`) and a dashboard (`monitoring/dashboard.json`)
 are loaded there. See

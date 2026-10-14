@@ -34,8 +34,11 @@ tc-stream-1 (Hetzner)                              Grafana Cloud
   CPU, memory, disk and network, and sends them to Grafana Cloud.
 - `alloy` also reads Icecast's logs (error log and access log), removes
   passwords and tokens, drops the healthcheck noise and sends them to
-  Grafana Cloud Logs. It reads them through `docker-socket-proxy`, which only
-  lets it list containers and read their logs.
+  Grafana Cloud Logs. It reads them through `docker-socket-proxy`, which
+  only lets through the read calls needed for that (list and inspect
+  containers, read their logs, list networks): Alloy cannot start, change or
+  enter a container, nor copy files out of one. Inspect shows container
+  environments, which Alloy can already read on the host disk.
 - Both only run when the setting `COMPOSE_PROFILES` contains `monitoring`.
   Until then nothing changes on the node.
 
@@ -326,7 +329,7 @@ tags; plain `docker compose` on the node fails without them.
 | Rules loaded but no email | No contact point on the notification policy | Step 7 |
 | Dashboard shows *No data*, Explore shows `icecast_up` = 1 | Wrong data source on the dashboard | Pick `grafanacloud-<stack>-prom` in the dashboard's **Data source** drop-down |
 | Metrics arrive but no logs | Token C's policy lacks `logs: Write`, or wrong F/G | In the alloy logs look for `loki.write` and `401`: add the scope (step 2) or run step 4 again, deploy |
-| `docker-socket-proxy` `403` in the alloy logs | Proxy permissions changed | Its environment must have `CONTAINERS: 1` and `NETWORKS: 1` (`deploy/compose.yaml`) |
+| `403` from `docker-socket-proxy` in the alloy logs | Alloy needs a Docker API call the allowlist refuses (for example after an Alloy upgrade) | Run `deploy.sh compose logs docker-socket-proxy` to see the refused path, then widen `-allowGET` in `deploy/compose.yaml` and `compose.yaml` for that read call only |
 | Log panels empty, Explore shows logs | Wrong logs data source on the dashboard | Pick `grafanacloud-<stack>-logs` in **Logs data source** |
 
 ## For later

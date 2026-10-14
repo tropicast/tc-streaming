@@ -144,7 +144,8 @@ jobs:
             [[ -n ${!name} ]] || { echo "Missing secret or variable: $name" >&2; exit 1; }
           done
           # Alloy starts without them, but its pushes fail: warn instead of blocking the deploy.
-          if [[ ,$COMPOSE_PROFILES, == *,monitoring,* ]]; then
+          # Compose accepts "stub, monitoring": compare without spaces.
+          if [[ ,${COMPOSE_PROFILES//[[:space:]]/}, == *,monitoring,* ]]; then
             for name in GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_LOKI_URL GRAFANA_CLOUD_LOKI_USER GRAFANA_CLOUD_TOKEN; do
               [[ -n ${!name} ]] || echo "::warning::$name is not set: monitoring cannot push to Grafana Cloud (docs/how-to/set-up-monitoring.md, step 4)"
             done

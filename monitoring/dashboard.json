@@ -52,22 +52,14 @@
       },
       {
         "name": "station",
-        "label": "Station",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
-        "query": "label_values(icecast_mount_up, station)",
-        "refresh": 2,
-        "includeAll": true,
-        "allValue": ".*",
-        "multi": true,
+        "label": "Station (regex)",
+        "type": "textbox",
+        "query": ".*",
         "current": {
-          "text": "All",
-          "value": "$__all"
+          "text": ".*",
+          "value": ".*"
         },
-        "description": "Filters the log panels. All also shows lines without a station."
+        "description": "Filters the log panels by station ID, e.g. 42 or 42|43. .* shows all lines, including those without a station. Free text, so stations that never went live (always rejected) can be picked too."
       },
       {
         "name": "level",

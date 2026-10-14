@@ -64,13 +64,15 @@ case $code in
     000) fail "Could not reach $url" ;;
 esac
 ok "Grafana Cloud accepts the token (HTTP $code on an empty test push)"
-# An empty stream list is accepted (204) or rejected as bad input when the
-# credentials are right, and with 401/403 when they are wrong.
+# An empty stream list is accepted (204) or rejected as bad input (400) when
+# the URL and credentials are right; anything else is a failure.
 code=$(curl -s -o /dev/null -w '%{http_code}' -u "$loki_user:$metrics_token" \
     -H 'Content-Type: application/json' --data-binary '{"streams":[]}' "$loki_url" || true)
 case $code in
+    204 | 400) ;;
     401 | 403) fail "Grafana Cloud Logs rejected value G + C (HTTP $code). Check the Loki username and that the token's policy has logs: Write." ;;
     000) fail "Could not reach $loki_url" ;;
+    *) fail "Unexpected answer from $loki_url (HTTP $code). Check value F (wrong stack or region?) and try again." ;;
 esac
 ok "Grafana Cloud Logs accepts the token (HTTP $code on an empty test push)"
 
