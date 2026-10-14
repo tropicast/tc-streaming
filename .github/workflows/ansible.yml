@@ -29,4 +29,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uvx ansible-lint site.yml
+      # Versions pinned in requirements.txt (bumped by Dependabot).
+      - run: uvx --with-requirements requirements.txt ansible-lint site.yml
