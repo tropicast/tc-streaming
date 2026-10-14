@@ -84,13 +84,35 @@ services:
       HCLOUD_READ_TOKEN: ${HCLOUD_READ_TOKEN:-}
       HCLOUD_SERVER_NAME: ${NODE_NAME:-}
 
-  # Ships host and Icecast metrics to Grafana Cloud.
+  # Read-only Docker API for Alloy's log collection (#46): only container
+  # and network listing and container logs (GET), no POST, no exec.
+  # Reachable only on the internal docker-api network, so Icecast and Caddy
+  # cannot talk to it.
+  docker-socket-proxy:
+    profiles: ["monitoring"]
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+
+  # Ships host and Icecast metrics and Icecast logs to Grafana Cloud.
   alloy:
     profiles: ["monitoring"]
     image: grafana/alloy:v1.20.1
     restart: unless-stopped
     command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
     pid: host
+    depends_on:
+      - docker-socket-proxy
+    networks:
+      - default
+      - docker-api
     volumes:
       - ./alloy:/etc/alloy:ro
       - /proc:/host/proc:ro
@@ -100,6 +122,8 @@ services:
     environment:
       GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:-}
       GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:-}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:-}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:-}
       GRAFANA_CLOUD_TOKEN: ${GRAFANA_CLOUD_TOKEN:-}
       NODE_NAME: ${NODE_NAME:-local}
 
@@ -107,3 +131,9 @@ volumes:
   caddy-data:
   caddy-config:
   alloy-data:
+
+networks:
+  default:
+  # No route out: only Alloy and docker-socket-proxy are attached.
+  docker-api:
+    internal: true

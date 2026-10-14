@@ -182,6 +182,19 @@ it in GitHub first.
 
 ## Everyday checks
 
+Icecast logs are in Grafana (dashboard *Tropicast streaming node*, panel
+*Icecast logs*, or **Explore** with the `grafanacloud-<stack>-logs` data
+source). Useful queries:
+
+```text
+{job="icecast", level=~"error|warn"}                     # problems only
+{job="icecast"} | station="42"                           # one station
+{job="icecast", log_type="access"} | status=~"401|403"   # refused sources and admin calls
+{job="icecast", log_type="error"} |= "auth_url"          # auth endpoint answers
+```
+
+On the node (also for Caddy, whose logs are not shipped yet):
+
 ```sh
 ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4>
 /opt/tc-streaming/deploy.sh status
@@ -193,10 +206,11 @@ Plain `docker compose` fails on the node without the release's image tags;
 
 ## Monitoring
 
-Grafana Cloud collects node and station metrics and sends the alerts in
-`monitoring/rules.yaml`. Setup:
-[how-to/set-up-monitoring.md](how-to/set-up-monitoring.md). The exporter
-and Alloy run on the node with the Compose profile `monitoring`.
+Grafana Cloud collects node and station metrics and Icecast logs, and sends
+the alerts in `monitoring/rules.yaml`. Setup:
+[how-to/set-up-monitoring.md](how-to/set-up-monitoring.md). The exporter,
+Alloy and docker-socket-proxy run on the node with the Compose profile
+`monitoring`.
 
 ## Change station limits
 
@@ -256,6 +270,8 @@ seconds) or rejects Icecast's own credentials. Stations already live are
 not affected.
 
 - Check the Icecast log: `auth_url/url_add_client` lines show the reason.
+  In Grafana: `{job="icecast", log_type="error"} |= "auth_url"`, or the
+  dashboard panel *Rejected broadcasters*.
 - Check the API's health and that `ICECAST_SOURCE_AUTH_URL` and
   `ICECAST_SOURCE_AUTH_PASSWORD` match on both sides.
 

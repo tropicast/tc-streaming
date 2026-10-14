@@ -1,7 +1,9 @@
 // Grafana Alloy on the streaming node (#10): host and Icecast metrics,
-// pushed to Grafana Cloud (Prometheus remote write).
+// pushed to Grafana Cloud (Prometheus remote write), and Icecast logs (#46),
+// pushed to Grafana Cloud Logs (Loki).
 // Environment: GRAFANA_CLOUD_PROM_URL, GRAFANA_CLOUD_PROM_USER,
-// GRAFANA_CLOUD_TOKEN, NODE_NAME.
+// GRAFANA_CLOUD_LOKI_URL, GRAFANA_CLOUD_LOKI_USER, GRAFANA_CLOUD_TOKEN
+// (scopes metrics:write and logs:write), NODE_NAME.
 
 prometheus.exporter.unix "host" {
   procfs_path = "/host/proc"
@@ -57,6 +59,156 @@ prometheus.remote_write "cloud" {
 
     basic_auth {
       username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Icecast logs (#46). Icecast writes its error log and its access log to
+// stdout (icecast.xml); Docker keeps them only until rotation or until the
+// container is recreated. Alloy reads them through docker-socket-proxy
+// (read-only Docker API, compose.yaml), never through the raw socket.
+
+discovery.docker "icecast" {
+  host             = "tcp://docker-socket-proxy:2375"
+  refresh_interval = "10s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.service=icecast"]
+  }
+}
+
+// Low-cardinality stream labels only; everything per request goes to
+// structured metadata below.
+discovery.relabel "icecast_logs" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "icecast"
+  }
+
+  rule {
+    target_label = "instance"
+    replacement  = sys.env("NODE_NAME")
+  }
+}
+
+loki.source.docker "icecast" {
+  host             = "tcp://docker-socket-proxy:2375"
+  targets          = discovery.docker.icecast.targets
+  relabel_rules    = discovery.relabel.icecast_logs.rules
+  refresh_interval = "10s"
+  forward_to       = [loki.process.icecast.receiver]
+}
+
+loki.process "icecast" {
+  forward_to = [loki.write.cloud.receiver]
+
+  // Noise: the container healthcheck every 10 s, the exporter's scrape
+  // every 15 s, and Icecast internals logged for every request.
+  stage.drop {
+    expression          = `"GET /(status-json\.xsl|admin/stats\.xml) HTTP/[0-9.]+" 200 `
+    drop_counter_reason = "icecast_polling"
+  }
+
+  stage.drop {
+    expression          = `event-stream/event_stream_queue event queued|reportxml/reportxml_database_build_report No matching definition`
+    drop_counter_reason = "icecast_noise"
+  }
+
+  // Secrets never leave the node. Icecast 2.5 strips query strings from the
+  // access log, but other lines may carry a URL or a header verbatim.
+  // Each capture group is replaced.
+  stage.replace {
+    expression = `(?i)\b(?:pass|password|passwd|token|secret|key)=([^&\s"]+)`
+    replace    = "REDACTED"
+  }
+
+  stage.replace {
+    expression = `://[^/\s:@]+:([^@/\s]+)@`
+    replace    = "REDACTED"
+  }
+
+  stage.replace {
+    expression = `(?i)authorization:\s*(?:basic\s+|bearer\s+)?([^\s"]+)`
+    replace    = "REDACTED"
+  }
+
+  // Error log: [2026-10-14  10:38:50] INFO auth_url/url_add_client client auth ... failed
+  stage.match {
+    selector = `{job="icecast"} |~ "^\\[\\d{4}-"`
+
+    stage.regex {
+      expression = `^\[[^\]]+\] (?P<icecast_level>[A-Z]{4}) (?P<module>[^/ ]+)/(?P<function>\S+) `
+    }
+
+    stage.template {
+      source   = "level"
+      template = `{{ if eq .icecast_level "EROR" }}error{{ else if eq .icecast_level "WARN" }}warn{{ else if eq .icecast_level "DBUG" }}debug{{ else }}info{{ end }}`
+    }
+
+    stage.static_labels {
+      values = {log_type = "error"}
+    }
+  }
+
+  // Access log (combined format plus duration in seconds):
+  // 172.21.0.1 - 42 [14/Oct/2026:10:38:50 +0000] "PUT /stations/42/live.mp3 HTTP/1.1" 401 775 "-" "Lavf/63.1.101" 0
+  stage.match {
+    selector = `{job="icecast"} |~ "^\\S+ \\S+ \\S+ \\[\\d{2}/"`
+
+    stage.regex {
+      expression = `^\S+ \S+ (?P<user>\S+) \[[^\]]+\] "(?P<method>[A-Z]+) (?P<path>[^\s"]+)[^"]*" (?P<status>(?P<status_class>\d)\d{2}) `
+    }
+
+    // 4xx (rejected source, wrong admin password) shows as a warning.
+    stage.template {
+      source   = "level"
+      template = `{{ if eq .status_class "5" }}error{{ else if eq .status_class "4" }}warn{{ else }}info{{ end }}`
+    }
+
+    stage.static_labels {
+      values = {log_type = "access"}
+    }
+  }
+
+  // Mount and station from either log, e.g. "/stations/42/live.mp3".
+  stage.regex {
+    expression = `(?P<mount>/stations/(?P<station>[^/\s"]+)/[^\s"]+)`
+  }
+
+  stage.labels {
+    values = {level = ""}
+  }
+
+  stage.structured_metadata {
+    values = {
+      module   = "",
+      function = "",
+      method   = "",
+      status   = "",
+      user     = "",
+      mount    = "",
+      station  = "",
+    }
+  }
+}
+
+loki.write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
       password = sys.env("GRAFANA_CLOUD_TOKEN")
     }
   }

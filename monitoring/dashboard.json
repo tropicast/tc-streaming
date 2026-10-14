@@ -25,6 +25,16 @@
         "refresh": 1
       },
       {
+        "name": "logs",
+        "label": "Logs data source",
+        "type": "datasource",
+        "query": "loki",
+        "regex": "/grafanacloud-.*-logs$/",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
         "name": "instance",
         "type": "query",
         "datasource": {
@@ -34,6 +44,38 @@
         "query": "label_values(icecast_up, instance)",
         "refresh": 2,
         "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "station",
+        "label": "Station",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(icecast_mount_up, station)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "Filters the log panels. All also shows lines without a station."
+      },
+      {
+        "name": "level",
+        "label": "Log level",
+        "type": "custom",
+        "query": "error,warn,info,debug",
+        "includeAll": true,
+        "allValue": ".*",
         "multi": true,
         "current": {
           "text": "All",
@@ -285,7 +327,13 @@
               "mode": "normal"
             }
           },
-          "noValue": "No station on air"
+          "noValue": "No station on air",
+          "links": [
+            {
+              "title": "Icecast logs for station ${__field.labels.station}",
+              "url": "/d/tropicast-streaming?var-station=${__field.labels.station}&${__url_time_range}&${instance:queryparam}&${datasource:queryparam}&${logs:queryparam}"
+            }
+          ]
         },
         "overrides": []
       },
@@ -334,7 +382,13 @@
               "mode": "normal"
             }
           },
-          "noValue": "No station on air"
+          "noValue": "No station on air",
+          "links": [
+            {
+              "title": "Icecast logs for station ${__field.labels.station}",
+              "url": "/d/tropicast-streaming?var-station=${__field.labels.station}&${__url_time_range}&${instance:queryparam}&${datasource:queryparam}&${logs:queryparam}"
+            }
+          ]
         },
         "overrides": []
       },
@@ -545,7 +599,171 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Icecast warnings and errors",
+      "datasource": {
+        "type": "loki",
+        "uid": "${logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${logs}"
+          },
+          "expr": "sum by (level) (count_over_time({job=\"icecast\", instance=~\"$instance\", level=~\"error|warn\"} | station=~\"$station\" [$__interval]))",
+          "legendFormat": "{{level}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "error"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "warn"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "Icecast log lines at level error or warn. Access-log lines count as warn for 4xx and error for 5xx."
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Rejected broadcasters",
+      "datasource": {
+        "type": "loki",
+        "uid": "${logs}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${logs}"
+          },
+          "expr": "sum by (station) (count_over_time({job=\"icecast\", instance=~\"$instance\", log_type=\"access\"} | method=~\"PUT|SOURCE\" | status=~\"401|403\" | station=~\"$station\" [$__interval]))",
+          "legendFormat": "{{station}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "noValue": "None"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "Source connections refused by the auth endpoint (wrong password, unknown station, over plan limits). The matching error-log line gives the reason."
+    },
+    {
+      "id": 13,
+      "type": "logs",
+      "title": "Icecast logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "${logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${logs}"
+          },
+          "expr": "{job=\"icecast\", instance=~\"$instance\", level=~\"$level\"} | station=~\"$station\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "description": "Error log (log_type=error) and access log (log_type=access). Filter with Station and Log level above; open a line for module, mount, status and user."
     }
   ],
-  "description": "Tropicast streaming node. Pick the stack's grafanacloud-<stack>-prom data source in 'Data source'."
+  "description": "Tropicast streaming node. Pick the stack's grafanacloud-<stack>-prom data source in 'Data source' and grafanacloud-<stack>-logs in 'Logs data source'."
 }

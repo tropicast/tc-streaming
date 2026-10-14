@@ -43,7 +43,7 @@ tone.
 - Static file serving is off. The root page returns 404, while
   `/status-json.xsl` still works for the healthcheck.
 - Logs go to stdout. The access log records the source username, never the
-  password.
+  password. With monitoring on, Alloy ships them to Grafana Cloud Logs.
 - `ICECAST_HOSTNAME` sets the public hostname Icecast reports.
 - The global source password is an internal break-glass secret only.
 - The relay password is generated per node unless `ICECAST_RELAY_PASSWORD`
@@ -317,6 +317,8 @@ rollbacks, what restarts what, and incidents.
 `exporter/icecast_exporter.py` (station listeners and bytes, Hetzner
 monthly traffic) and Grafana Alloy (`deploy/alloy/config.alloy`) run on the
 node with the Compose profile `monitoring` and push to Grafana Cloud.
+Alloy also ships Icecast's logs to Grafana Cloud Logs (#46), reading them
+through a read-only Docker API proxy (`docker-socket-proxy`).
 Alert rules (`monitoring/rules.yaml`, unit-tested with
 `monitoring/rules.test.yaml`) and a dashboard (`monitoring/dashboard.json`)
 are loaded there. See

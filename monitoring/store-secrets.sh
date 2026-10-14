@@ -7,6 +7,9 @@
 #   A  Grafana Prometheus push URL     -> variable GRAFANA_CLOUD_PROM_URL
 #   B  Grafana Prometheus username     -> variable GRAFANA_CLOUD_PROM_USER
 #   C  Grafana token, metrics: Write   -> secret   GRAFANA_CLOUD_TOKEN
+#      and logs: Write
+#   F  Grafana Loki push URL           -> variable GRAFANA_CLOUD_LOKI_URL
+#   G  Grafana Loki username           -> variable GRAFANA_CLOUD_LOKI_USER
 #   E  Hetzner token, permission Read  -> secret   HCLOUD_READ_TOKEN
 set -euo pipefail
 
@@ -37,7 +40,18 @@ user=$(ask "   B")
 [[ $user =~ ^[0-9]+$ ]] || fail "The username is a number, e.g. 1234567"
 ok "username format"
 
-echo "C. Grafana token with scope metrics: Write (starts with glc_)"
+echo "F. Grafana Loki push URL (Loki card, URL + /loki/api/v1/push)"
+loki_url=$(ask "   F")
+[[ $loki_url =~ ^https://logs-[A-Za-z0-9.-]+\.grafana\.net/loki/api/v1/push$ ]] ||
+    fail "Not a Grafana Cloud Loki push URL. It looks like https://logs-prod-XXX.grafana.net/loki/api/v1/push"
+ok "Loki URL format"
+
+echo "G. Grafana Loki username / user ID (digits only, differs from B)"
+loki_user=$(ask "   G")
+[[ $loki_user =~ ^[0-9]+$ ]] || fail "The Loki username is a number, e.g. 987654"
+ok "Loki username format"
+
+echo "C. Grafana token with scopes metrics: Write and logs: Write (starts with glc_)"
 metrics_token=$(ask "   C" secret)
 [[ $metrics_token == glc_* ]] || fail "Grafana Cloud tokens start with glc_. Did you paste the Hetzner token?"
 # An empty push is rejected as bad input when the credentials are right,
@@ -50,6 +64,15 @@ case $code in
     000) fail "Could not reach $url" ;;
 esac
 ok "Grafana Cloud accepts the token (HTTP $code on an empty test push)"
+# An empty stream list is accepted (204) or rejected as bad input when the
+# credentials are right, and with 401/403 when they are wrong.
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$loki_user:$metrics_token" \
+    -H 'Content-Type: application/json' --data-binary '{"streams":[]}' "$loki_url" || true)
+case $code in
+    401 | 403) fail "Grafana Cloud Logs rejected value G + C (HTTP $code). Check the Loki username and that the token's policy has logs: Write." ;;
+    000) fail "Could not reach $loki_url" ;;
+esac
+ok "Grafana Cloud Logs accepts the token (HTTP $code on an empty test push)"
 
 echo "E. Hetzner Cloud API token with permission Read (from the Hetzner Console, NOT Grafana)"
 hetzner_token=$(ask "   E" secret)
@@ -70,6 +93,8 @@ ok "Hetzner token is read-only and sees $server"
 echo "Storing in GitHub..."
 gh variable set GRAFANA_CLOUD_PROM_URL --body "$url" >/dev/null
 gh variable set GRAFANA_CLOUD_PROM_USER --body "$user" >/dev/null
+gh variable set GRAFANA_CLOUD_LOKI_URL --body "$loki_url" >/dev/null
+gh variable set GRAFANA_CLOUD_LOKI_USER --body "$loki_user" >/dev/null
 printf '%s' "$metrics_token" | gh secret set GRAFANA_CLOUD_TOKEN >/dev/null
 printf '%s' "$hetzner_token" | gh secret set HCLOUD_READ_TOKEN >/dev/null
 profiles=$(gh variable get COMPOSE_PROFILES 2>/dev/null || true)
