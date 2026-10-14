@@ -225,7 +225,7 @@ dig NS <domain> @a.gtld-servers.net +norec  # what the .com registry delegates t
 ## Next steps
 
 1. Harden the node and install Docker with Ansible
-   (README, *Node hardening*). Run it as `root` once; it then turns off
+   ([Node hardening](../reference/infrastructure.md#node-hardening-ansible)). Run it as `root` once; it then turns off
    root login.
 2. Deploy the Icecast and Caddy stack (issue #11).
 

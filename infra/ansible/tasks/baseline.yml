@@ -44,7 +44,7 @@
       APT::Periodic::Unattended-Upgrade "1";
 
 # A reboot drops every listener, so never reboot automatically.
-# Reboot by hand in the maintenance window (see README).
+# Reboot by hand in the maintenance window (see docs/reference/infrastructure.md, "Node hardening").
 - name: Never reboot automatically after upgrades
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/52tropicast-unattended
