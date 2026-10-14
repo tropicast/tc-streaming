@@ -66,7 +66,10 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
 ```
 
 - `max_listeners`: a listener above the cap gets `503`. Stations without an
-  entry use `default.max_listeners` (the free-tier cap).
+  entry use `default.max_listeners` (the free-tier cap). It must be an
+  integer of at least 1. Icecast accepts at most 16384, so higher caps (the
+  Pro plan's 25,000) are lowered to 16384; a node serves far fewer listeners
+  anyway (`<clients>`).
 - `formats` and `max_bitrate_kbps` are checked by the source auth endpoint
   when a station connects, using the bitrate the source declares
   (`Ice-Bitrate` / `Ice-Audio-Info`). See `docs/source-auth.md`.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end check of per-station limits (#8): listener caps, the default
-# cap, plan formats and bitrates, and a reload that keeps listeners.
+# cap, plan formats and bitrates, a reload that keeps listeners, and caps
+# Icecast cannot take (#55).
 # Needs Docker with Compose, ffmpeg with libmp3lame, curl and python3.
 set -euo pipefail
 
@@ -36,7 +37,8 @@ write_limits() {
                                    "language_codes": "mg,fr", "homepage": "https://radio42.example",
                                    "logo": "https://radio42.example/logo.png",
                                    "main_stream_url": "https://listen.example/stations/42/live.mp3"}},
-              "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}}}}
+              "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}},
+              "55": {"plan": "pro", "max_listeners": 25000, "formats": ["mp3", "opus"]}}}
 JSON
 }
 write_limits 2
@@ -134,5 +136,21 @@ delisted=$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/99/li
 check "delisted station: answers (not at its cap)" 200 "$(head -n 1 <<<"$delisted" | cut -d' ' -f2)"
 check "delisted station: icy-do-not-index" 1 "$(grep -i '^icy-do-not-index:' <<<"$delisted" | cut -d' ' -f2-)"
 check "delisted station: no listed-only headers" "" "$(grep -iE '^icy-(country-code|logo|language-codes|main-stream-url):' <<<"$delisted" || true)"
+
+# Caps Icecast cannot take (#55): above its 16384 limit the cap is lowered,
+# 0 is refused before Icecast sees it and the running config is kept.
+config_cap() {
+    compose exec -T icecast python3 -c 'import sys, xml.etree.ElementTree as ET
+r = ET.parse("/run/icecast/icecast.xml").getroot()
+print(" ".join(m.findtext("max-listeners") for m in r.findall("mount") if m.findtext("mount-name") == sys.argv[1]))' "$1"
+}
+check "Pro cap of 25000 is lowered to 16384 (mp3)" 16384 "$(config_cap /stations/55/live.mp3)"
+check "Pro cap of 25000 is lowered to 16384 (opus)" 16384 "$(config_cap /stations/55/live.opus)"
+check "Icecast accepts every generated cap" 0 "$(compose logs icecast | grep -c 'out of range' || true)"
+write_limits 0
+reload_error=$(compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.py reload-stations 2>&1 >/dev/null || true)
+check "a cap of 0 fails the reload with a clear message" yes \
+    "$([[ $reload_error == *"station 42 needs an integer max_listeners >= 1"* ]] && echo yes || echo no)"
+check "a failed reload keeps the running caps" 4 "$(config_cap /stations/42/live.mp3)"
 
 exit "$failures"
