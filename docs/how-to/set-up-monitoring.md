@@ -8,27 +8,37 @@ When you finish this guide:
   month, and CPU, memory and network of the node.
 - Grafana checks the public URLs **from outside** every minute and warns you
   before the HTTPS certificate expires.
+- You can **search Icecast's logs** in Grafana (why a broadcaster was
+  rejected, when a station dropped), without logging in to the node.
 
 It uses the **Grafana Cloud free tier** (no credit card; 10,000 metric
-series and 14 days of history, far more than one node needs). Plan about
-45 minutes.
+series, 50 GB of logs per month and 14 days of history, far more than one
+node needs). Plan about 45 minutes.
 
 ## How it works
 
 ```text
 tc-stream-1 (Hetzner)                              Grafana Cloud
-┌────────────────────────────────────┐             ┌─────────────────────┐
-│ Icecast ──► icecast-exporter ──┐   │   metrics   │ Prometheus (storage)│
-│                                ├─► alloy ───────►│ Alert rules ──► email│
-│ host CPU/memory/disk/network ──┘   │   (HTTPS)   │ Dashboard           │
-│ Hetzner API (monthly traffic) ─► icecast-exporter│ Uptime checks ──► node│
-└────────────────────────────────────┘             └─────────────────────┘
+┌────────────────────────────────────┐             ┌──────────────────────┐
+│ Icecast ──► icecast-exporter ──┐   │   metrics   │ Prometheus (storage) │
+│                                ├─► alloy ───────►│ Loki (log storage)   │
+│ host CPU/memory/disk/network ──┘   │ and logs    │ Alert rules ──► email│
+│ Icecast logs ─► docker-socket-proxy ─► alloy     │ Dashboard            │
+│ Hetzner API (monthly traffic) ─► icecast-exporter│ Uptime checks ─► node │
+└────────────────────────────────────┘   (HTTPS)   └──────────────────────┘
 ```
 
 - `icecast-exporter` reads Icecast's statistics and the node's monthly
   traffic from Hetzner.
 - `alloy` (Grafana Alloy) collects those numbers plus the node's own
   CPU, memory, disk and network, and sends them to Grafana Cloud.
+- `alloy` also reads Icecast's logs (error log and access log), removes
+  passwords and tokens, drops the healthcheck noise and sends them to
+  Grafana Cloud Logs. It reads them through `docker-socket-proxy`, which
+  only lets through the read calls needed for that (list and inspect
+  containers, read their logs, list networks): Alloy cannot start, change or
+  enter a container, nor copy files out of one. Inspect shows container
+  environments, which Alloy can already read on the host disk.
 - Both only run when the setting `COMPOSE_PROFILES` contains `monitoring`.
   Until then nothing changes on the node.
 
@@ -47,7 +57,9 @@ Write these down as you go. Treat the three tokens like passwords.
 |---|---|---|---|---|
 | A | Prometheus **push URL** | Grafana (step 1) | `https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push` | GitHub variable `GRAFANA_CLOUD_PROM_URL` |
 | B | Prometheus **username** | Grafana (step 1) | only digits, e.g. `1234567` | GitHub variable `GRAFANA_CLOUD_PROM_USER` |
-| C | Grafana token that **sends metrics** | Grafana (step 2) | starts with `glc_` | GitHub secret `GRAFANA_CLOUD_TOKEN` |
+| F | Loki **push URL** | Grafana (step 1) | `https://logs-prod-012.grafana.net/loki/api/v1/push` | GitHub variable `GRAFANA_CLOUD_LOKI_URL` |
+| G | Loki **username** | Grafana (step 1) | only digits, **not** the same as B | GitHub variable `GRAFANA_CLOUD_LOKI_USER` |
+| C | Grafana token that **sends metrics and logs** | Grafana (step 2) | starts with `glc_` | GitHub secret `GRAFANA_CLOUD_TOKEN` |
 | D | Grafana token that **edits alert rules** | Grafana (step 2) | starts with `glc_` | nowhere: used once in step 6 |
 | E | Hetzner token that **reads traffic** | **Hetzner Console** (step 3) | letters and digits, **never** starts with `glc_` | GitHub secret `HCLOUD_READ_TOKEN` |
 
@@ -57,8 +69,8 @@ refuses a token from the wrong one.
 
 ## Step 1: Create the Grafana Cloud account
 
-Goal: get a Grafana Cloud "stack" (your own Grafana + metric storage) and
-note where to send metrics.
+Goal: get a Grafana Cloud "stack" (your own Grafana + metric and log
+storage) and note where to send metrics and logs.
 
 1. Go to <https://grafana.com/auth/sign-up/create-user> and sign up for the
    free plan.
@@ -72,20 +84,26 @@ note where to send metrics.
      `/api/prom/push`);
    - the **Username / Instance ID** → value **B**.
 
+5. Go back to the stack and click **Details** on the **Loki** card. Copy:
+   - the **URL** and add `/loki/api/v1/push` → value **F**;
+   - the **User** → value **G**.
+
 Check: value A starts with `https://prometheus-` and ends with
-`/api/prom/push`; value B is only digits.
+`/api/prom/push`; value B is only digits. Value F starts with
+`https://logs-` and ends with `/loki/api/v1/push`; value G is only digits
+and differs from B.
 
 ## Step 2: Create the two Grafana tokens (C and D)
 
-Goal: one token that only sends metrics (used by the node) and one that
-only edits alert rules (used by you, once). Both are created in
+Goal: one token that only sends metrics and logs (used by the node) and one
+that only edits alert rules (used by you, once). Both are created in
 **Grafana**, and both start with `glc_`.
 
 1. In the Cloud Portal, open **Access Policies** (under *Security*).
 2. Click **Create access policy**:
    - Name: `tc-stream-metrics`
    - Realm: your stack
-   - Scopes: **metrics: Write** only
+   - Scopes: **metrics: Write** and **logs: Write** only
 3. On the new policy, click **Add token**, name it `tc-stream-1`, and copy
    the token. Label it **C (Grafana, metrics)**. It is shown only once.
 4. Create a second policy:
@@ -94,6 +112,10 @@ only edits alert rules (used by you, once). Both are created in
 5. Add a token to it, copy it, and label it **D (Grafana, rules)**.
 
 Check: both tokens start with `glc_`.
+
+Already set up before logs were added? Open the `tc-stream-metrics` policy,
+click **Edit**, add **logs: Write** and save. Token C keeps working and can
+now send logs; you do not need a new one.
 
 ## Step 3: Create the Hetzner read-only token (E)
 
@@ -113,7 +135,7 @@ Check: the token does **not** start with `glc_`. Do not reuse the
 
 ## Step 4: Check and store the values in GitHub
 
-Goal: store A, B, C and E where the Deploy workflow reads them, after
+Goal: store A, B, C, E, F and G where the Deploy workflow reads them, after
 checking each one.
 
 From the `tc-streaming` folder, run:
@@ -129,7 +151,10 @@ stops at the first wrong one, with the reason:
 |---|---|
 | A matches the Grafana push URL format | a URL from the wrong card, missing `/api/prom/push` |
 | B is only digits | the stack name instead of the instance ID |
+| F matches the Grafana Loki push URL format | the URL without `/loki/api/v1/push` |
+| G is only digits | the stack name instead of the user ID |
 | C starts with `glc_` and Grafana Cloud accepts B + C | wrong token, missing `metrics: Write`, wrong username |
+| Grafana Cloud Logs accepts G + C | missing `logs: Write`, B pasted as G |
 | E is not a Grafana token, Hetzner accepts it and it sees `tc-stream-1` | a Grafana token pasted as E, wrong Hetzner project |
 | E cannot write | a *Read & Write* token |
 
@@ -148,14 +173,17 @@ node has another name, run it as `DEPLOY_SERVER=<name> monitoring/store-secrets.
 
 ## Step 5: Deploy
 
-Goal: start `icecast-exporter` and `alloy` on the node.
+Goal: start `icecast-exporter`, `docker-socket-proxy` and `alloy` on the
+node.
 
 ```sh
 gh workflow run deploy.yml --ref main
 gh run watch
 ```
 
-Icecast and Caddy keep running; only the two monitoring containers start.
+Icecast and Caddy keep running; only the monitoring containers start. With
+`monitoring` in `COMPOSE_PROFILES`, the workflow warns if one of A, B, C, F
+or G is missing.
 
 Check (after about 1 minute): in Grafana, open **Explore**, choose the
 Prometheus data source (named like `grafanacloud-<stack>-prom`) and run
@@ -166,6 +194,16 @@ icecast_up{instance="tc-stream-1"}
 up{job="node", instance="tc-stream-1"}
 hetzner_up
 ```
+
+Then choose the Loki data source (named like `grafanacloud-<stack>-logs`)
+and run:
+
+```text
+{job="icecast", instance="tc-stream-1"}
+```
+
+It must show Icecast lines, including `Icecast 2.5.0 server started` from
+the last restart.
 
 If a query returns nothing, see *Troubleshooting* below.
 
@@ -218,12 +256,14 @@ Check: the test email arrived.
 1. In Grafana, open **Dashboards → New → Import**.
 2. Upload `monitoring/dashboard.json` and click **Import**.
 3. At the top of the dashboard, check the **Data source** drop-down shows
-   `grafanacloud-<stack>-prom` (your metrics). Grafana Cloud also has other
+   `grafanacloud-<stack>-prom` (your metrics) and **Logs data source**
+   shows `grafanacloud-<stack>-logs`. Grafana Cloud also has other
    Prometheus-type data sources (usage, machine learning) that show
    *No data*.
 
-Check: the dashboard *Tropicast streaming node* shows `Icecast up` = 1 and
-your live stations.
+Check: the dashboard *Tropicast streaming node* shows `Icecast up` = 1,
+your live stations and, at the bottom, the *Icecast logs* panel. Click a
+station in *Listeners per station* to filter the log panels on it.
 
 ## Step 9: Add uptime and certificate checks
 
@@ -265,7 +305,7 @@ tags; plain `docker compose` on the node fails without them.
 | Alert | Severity | Fires when | First thing to do |
 |---|---|---|---|
 | StreamingNodeDown | critical | No metrics at all for 2 minutes | Hetzner Console: is the server running? Then `deploy.sh compose ps` on the node |
-| IcecastDown | critical | Icecast does not answer for 1 minute | `deploy.sh compose logs icecast` on the node |
+| IcecastDown | critical | Icecast does not answer for 1 minute | *Icecast logs* panel, level `error`; then `deploy.sh compose logs icecast` on the node |
 | IcecastExporterDown | warning | The exporter is down for 2 minutes | Station numbers are missing; streaming may still work |
 | StationSourceDropped | info | A station that was live in the last 10 minutes is off air | Expected if it stopped on purpose |
 | EgressQuota70Percent | warning | 70% of the monthly traffic quota is used | Plan a second node or lower bitrates |
@@ -288,6 +328,9 @@ tags; plain `docker compose` on the node fails without them.
 | `rules load`: `requested resource not found` | The address contains `/api/prom` or `/push` | Use the step 6 commands: the address is only the host, ending in `.grafana.net` |
 | Rules loaded but no email | No contact point on the notification policy | Step 7 |
 | Dashboard shows *No data*, Explore shows `icecast_up` = 1 | Wrong data source on the dashboard | Pick `grafanacloud-<stack>-prom` in the dashboard's **Data source** drop-down |
+| Metrics arrive but no logs | Token C's policy lacks `logs: Write`, or wrong F/G | In the alloy logs look for `loki.write` and `401`: add the scope (step 2) or run step 4 again, deploy |
+| `403` from `docker-socket-proxy` in the alloy logs | Alloy needs a Docker API call the allowlist refuses (for example after an Alloy upgrade) | Run `deploy.sh compose logs docker-socket-proxy` to see the refused path, then widen `-allowGET` in `deploy/compose.yaml` and `compose.yaml` for that read call only |
+| Log panels empty, Explore shows logs | Wrong logs data source on the dashboard | Pick `grafanacloud-<stack>-logs` in **Logs data source** |
 
 ## For later
 
@@ -295,7 +338,8 @@ tags; plain `docker compose` on the node fails without them.
   from Grafana Cloud with a token that has `metrics: Read`, for example the
   query `sum by (station) (icecast_mount_listeners)`.
 - **Local test**: `tests/monitoring.sh` runs the exporter and Alloy against
-  a local Prometheus; CI runs it with the e2e tests.
+  a local Prometheus and Loki (labels, redaction, dropped healthchecks);
+  CI runs it with the e2e tests.
 - **Changing rules**: edit `monitoring/rules.yaml`, test with
   `docker run --rm -v "$PWD/monitoring:/m:ro" -w /m --entrypoint promtool prom/prometheus:v3.15.0 test rules rules.test.yaml`,
   then repeat step 6.

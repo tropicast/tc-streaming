@@ -125,6 +125,8 @@ jobs:
           HCLOUD_READ_TOKEN: ${{ secrets.HCLOUD_READ_TOKEN }}
           GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
           GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
+          GRAFANA_CLOUD_LOKI_URL: ${{ vars.GRAFANA_CLOUD_LOKI_URL }}
+          GRAFANA_CLOUD_LOKI_USER: ${{ vars.GRAFANA_CLOUD_LOKI_USER }}
           NODE_NAME: ${{ vars.DEPLOY_SERVER || 'tc-stream-1' }}
           ICECAST_SOURCE_AUTH_URL: ${{ vars.ICECAST_SOURCE_AUTH_URL }}
           ICECAST_SOURCE_AUTH_USER: ${{ vars.ICECAST_SOURCE_AUTH_USER || 'icecast' }}
@@ -141,8 +143,16 @@ jobs:
           for name in "${required[@]}"; do
             [[ -n ${!name} ]] || { echo "Missing secret or variable: $name" >&2; exit 1; }
           done
+          # Alloy starts without them, but its pushes fail: warn instead of blocking the deploy.
+          # Compose accepts "stub, monitoring": compare without spaces.
+          if [[ ,${COMPOSE_PROFILES//[[:space:]]/}, == *,monitoring,* ]]; then
+            for name in GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_LOKI_URL GRAFANA_CLOUD_LOKI_USER GRAFANA_CLOUD_TOKEN; do
+              [[ -n ${!name} ]] || echo "::warning::$name is not set: monitoring cannot push to Grafana Cloud (docs/how-to/set-up-monitoring.md, step 4)"
+            done
+          fi
           names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS
-                 GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_TOKEN
+                 GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_LOKI_URL
+                 GRAFANA_CLOUD_LOKI_USER GRAFANA_CLOUD_TOKEN
                  HCLOUD_READ_TOKEN NODE_NAME PRIVATE_IP)
           # Sent over stdin, never on a command line.
           for name in "${names[@]}"; do
