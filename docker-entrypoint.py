@@ -15,6 +15,9 @@ RUNTIME_CONFIG = Path("/run/icecast/icecast.xml")
 STATIONS_FILE = Path(os.environ.get("ICECAST_STATIONS_FILE", "/etc/icecast/stations.json"))
 STATION_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 FORMATS = ("mp3", "opus")
+# Icecast 2.5 ignores a <max-listeners> outside 1..16384 (cfgfile.c,
+# CONFIG_MAX_LISTENERS) and only logs "Value for tag is out of range".
+MAX_LISTENERS = 16384
 # Directory metadata (tc-dashboard#13): mount settings, and the "icy" v2 headers
 # directories such as RadioBrowser read from the stream to refresh a listing.
 DIRECTORY_TEXT = {"name": 400, "description": 512, "genre": 256}
@@ -85,18 +88,30 @@ def load_stations():
     stations = data.get("stations", {})
     if not isinstance(default, dict) or not isinstance(stations, dict):
         sys.exit(f"{STATIONS_FILE}: 'default' and 'stations' must be objects")
+    if "max_listeners" in default:
+        default["max_listeners"] = listener_cap("default", default["max_listeners"])
     for station_id, limits in stations.items():
         if not STATION_ID.match(station_id):
             sys.exit(f"{STATIONS_FILE}: invalid station id {station_id!r}")
-        listeners = limits.get("max_listeners")
-        if not isinstance(listeners, int) or listeners < 0:
-            sys.exit(f"{STATIONS_FILE}: station {station_id} needs an integer max_listeners >= 0")
+        limits["max_listeners"] = listener_cap(f"station {station_id}", limits.get("max_listeners"))
         for fmt in limits.get("formats", FORMATS):
             if fmt not in FORMATS:
                 sys.exit(f"{STATIONS_FILE}: station {station_id} has unknown format {fmt!r}")
         if "directory" in limits:
             check_directory(station_id, limits["directory"])
     return {"default": default, "stations": stations}
+
+
+def listener_cap(where, value):
+    """A listener cap Icecast accepts.
+
+    Caps above MAX_LISTENERS (the Pro plan's 25,000) are lowered to it: a
+    node serves far fewer clients (<clients> in icecast.xml), so the cap
+    does not change who gets in. Icecast has no cap of 0.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        sys.exit(f"{STATIONS_FILE}: {where} needs an integer max_listeners >= 1")
+    return min(value, MAX_LISTENERS)
 
 
 def check_directory(station_id, directory):
@@ -175,7 +190,7 @@ def apply_station_limits(tree, stations):
     if default_cap is not None:
         if cap is None:
             cap = ET.SubElement(default_mount, "max-listeners")
-        cap.text = str(int(default_cap))
+        cap.text = str(default_cap)
 
     auth = default_mount.find("authentication")
     position = list(root).index(default_mount)
