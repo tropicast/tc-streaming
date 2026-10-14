@@ -1,17 +1,50 @@
-# tc-streaming
+<p align="center">
+  <img src="docs/assets/tropicast-logo.svg" alt="Tropicast logo" width="120" height="120">
+</p>
 
-Tropicast streaming plane: Icecast origin and TLS gateway infrastructure.
-See the epic, tropicast/tc-streaming#1, for the MVP plan.
+<h1 align="center">Tropicast Streaming</h1>
 
-## Icecast image
+<p align="center">
+  Streaming plane for Tropicast: an Icecast origin behind a Caddy TLS gateway, with per-station limits, source auth and monitoring.
+</p>
 
-`Dockerfile` builds Icecast 2.5.0 and libigloo 0.9.5 from official source
-archives with pinned SHA-256 checksums. The runtime stage runs Icecast as a
-non-root user. `docker-entrypoint.py` writes the passwords from the
-environment into a private copy of `icecast.xml`, then removes them from the
-environment before starting Icecast.
+<p align="center">
+  <a href="https://github.com/tropicast/tc-streaming/actions/workflows/image.yml"><img src="https://github.com/tropicast/tc-streaming/actions/workflows/image.yml/badge.svg?branch=main" alt="Icecast image"></a>
+  <a href="https://github.com/tropicast/tc-streaming/actions/workflows/caddy-image.yml"><img src="https://github.com/tropicast/tc-streaming/actions/workflows/caddy-image.yml/badge.svg?branch=main" alt="Caddy image"></a>
+  <a href="https://github.com/tropicast/tc-streaming/actions/workflows/e2e.yml"><img src="https://github.com/tropicast/tc-streaming/actions/workflows/e2e.yml/badge.svg?branch=main" alt="E2E"></a>
+  <a href="https://github.com/tropicast/tc-streaming/actions/workflows/deploy-lint.yml"><img src="https://github.com/tropicast/tc-streaming/actions/workflows/deploy-lint.yml/badge.svg?branch=main" alt="Deploy lint"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tropicast/tc-streaming" alt="License: Apache-2.0"></a>
+  <a href="Dockerfile"><img src="https://img.shields.io/badge/Icecast-2.5.0-4B5563" alt="Icecast 2.5.0"></a>
+  <a href="caddy/Dockerfile"><img src="https://img.shields.io/badge/Caddy-2.11-1F88C0?logo=caddy&logoColor=white" alt="Caddy 2.11"></a>
+</p>
 
-### Run locally
+Broadcasters publish to `ingest.<domain>` with the desktop app
+([tc-station](https://github.com/tropicast/tc-station)) or any Icecast source
+client; listeners play `listen.<domain>`. The control plane
+([tc-dashboard](https://github.com/tropicast/tc-dashboard)) decides who may
+publish and sets each station's limits.
+
+```text
+ broadcaster --TLS--> Caddy (ingest, layer4) --raw--> Icecast 2.5 <--HTTP-- Caddy (listen) <--TLS-- listener
+                                                         |   ^
+                       source auth: tc-dashboard <-------+   +---- stations.json (limits, from tc-dashboard)
+                       exporter + Alloy ----------> Grafana Cloud (metrics, logs)
+```
+
+## Features
+
+- Icecast 2.5.0 built from pinned sources, non-root, passwords kept out of the environment.
+- Two mounts per station: Ogg Opus (data saver) and MP3, at `/stations/{id}/live.(opus|mp3)`.
+- Per-station listener caps, formats and bitrates from `stations.json`, reloaded with no disconnects.
+- Source authentication against the control plane: no shared broadcast password.
+- Caddy TLS gateway: HTTP proxy for listeners, layer4 pass-through for sources, Let's Encrypt certificates.
+- RadioBrowser listing metadata (`icy-*` headers) per station.
+- Metrics, alerts, dashboard and logs in Grafana Cloud.
+- Hetzner node with Terraform, hardened with Ansible, deployed by a manual workflow with rollback.
+
+## Quick start
+
+Needs Docker with Compose.
 
 ```sh
 cp .env.example .env
@@ -20,128 +53,9 @@ docker compose up -d --build --wait
 curl --fail http://127.0.0.1:8000/status-json.xsl
 ```
 
-Compose publishes Icecast on localhost only. Set `ICECAST_PORT` in `.env` to
-use another host port. `ICECAST_RELAY_PASSWORD` is optional; a random one is
-generated at startup when it is unset.
-
-Keep `.env` private. See *Source authentication* below to publish a test
-tone.
-
-### Production configuration
-
-`icecast.xml` is the production config for one shared multi-tenant node
-(issue #5):
-
-- Each station gets the mounts `/stations/{station-id}/live.mp3` and
-  `/stations/{station-id}/live.opus`.
-- Limits are sized for a CX33 and its 20 TB monthly egress quota: 1500
-  clients and 50 live sources. The load test (#12,
-  [docs/load-test.md](docs/load-test.md)) ran 1,400 listeners with no drops
-  at under 15% CPU; the monthly quota, not the CPU, is the limit.
-- Icecast is never exposed directly. Caddy is the only public entry point
-  and the firewall keeps port 8000 closed.
-- Static file serving is off. The root page returns 404, while
-  `/status-json.xsl` still works for the healthcheck.
-- Logs go to stdout. The access log records the source username, never the
-  password. With monitoring on, Alloy ships them to Grafana Cloud Logs.
-- `ICECAST_HOSTNAME` sets the public hostname Icecast reports.
-- The global source password is an internal break-glass secret only.
-- The relay password is generated per node unless `ICECAST_RELAY_PASSWORD`
-  is set.
-- Compose raises the container's open-file limit to 65536, because each
-  listener holds one file descriptor.
-
-### Station limits
-
-Each station gets its own Icecast mounts with a listener cap (issue #8).
-`stations.json` holds the desired state, from the control plane:
-
-```json
-{
-  "default": {"max_listeners": 100},
-  "stations": {
-    "42": {"plan": "free", "max_listeners": 100, "max_bitrate_kbps": 64, "formats": ["mp3", "opus"]}
-  }
-}
-```
-
-- `max_listeners`: a listener above the cap gets `503`. Stations without an
-  entry use `default.max_listeners` (the free-tier cap). It must be an
-  integer of at least 1. Icecast accepts at most 16384, so higher caps (the
-  Pro plan's 25,000) are lowered to 16384; a node serves far fewer listeners
-  anyway (`<clients>`).
-- `formats` and `max_bitrate_kbps` are checked by the source auth endpoint
-  when a station connects, using the bitrate the source declares
-  (`Ice-Bitrate` / `Ice-Audio-Info`). See `docs/source-auth.md`.
-- The entrypoint renders one `<mount>` per station and format, with a copy
-  of the source authentication. `docker-entrypoint.py reload-stations`
-  re-renders them and reloads Icecast with `SIGHUP`: live listeners and
-  sources stay connected.
-- `directory` (optional, tc-dashboard#13): public metadata of a station
-  listed in directories such as RadioBrowser: `listed`, `name`,
-  `description`, `genre`, `homepage`, `logo`, `country_code`,
-  `language_codes`, `main_stream_url`. When listed, the station's mounts send
-  `icy-version: 2`, `icy-index-metadata: 1` and the matching `icy-*` headers,
-  which directories read to update their listing (RadioBrowser has no edit
-  API). These headers come before any the source sends, so the control
-  plane's values win. With `"listed": false` the mounts send
-  `icy-do-not-index: 1` instead, with `icy-index-metadata: 1`: RadioBrowser
-  honours the opt-out only with both, then marks the entry broken, which hides
-  it from most apps. Values are checked: text without control characters
-  (C0, DEL, C1, line separators), http(s) URLs, a two-letter country code,
-  ISO 639-1 language codes.
-- Capacity planning (which station goes on which node, refusing a full
-  node) stays in the control plane; this repository only applies the
-  limits. Icecast's global `<sources>` limit (50) is the hard ceiling.
-
-Locally, Compose mounts `deploy/stations.example.json` (override with
-`STATIONS_JSON`). `tests/station-limits.sh` checks caps, the default cap,
-plan formats and bitrates, and a reload that keeps listeners.
-
-### Opus and data-saver bitrates
-
-Each station can publish two mounts (issue #9):
-
-| Mount | Format | Default bitrate | For |
-|---|---|---|---|
-| `/stations/{id}/live.opus` | Ogg Opus, `audio/ogg` | **64 kbps** (48 kbps on the free plan) | Default for listeners: about half the data of MP3 at similar quality |
-| `/stations/{id}/live.mp3` | MP3, `audio/mpeg` | 128 kbps | Fallback for players without Ogg Opus (Safari before 18.4, many car and smart-speaker apps) |
-
-- The source sends Ogg Opus with `Content-Type: audio/ogg`; Icecast and
-  Caddy pass it through unchanged. The station's plan
-  (`stations.json`: `formats`, `max_bitrate_kbps`) decides which mounts and
-  bitrates it may publish.
-- Measured on production, a 64 kbps Opus stream (stereo, 48 kHz) delivered
-  about **35 MB per listener-hour** including the 64 KB start-up burst and
-  Ogg framing, against 28.8 MB for the raw bitrate. #12 measures it at load.
-- **Web player**: use Opus when the browser supports it, otherwise MP3, and
-  label higher quality as an explicit choice ("uses more data"):
-
-  ```js
-  const opus = new Audio().canPlayType('audio/ogg; codecs="opus"');
-  audio.src = `https://listen.example.com/stations/${id}/live.${opus ? "opus" : "mp3"}`;
-  ```
-
-- Browser support (2026): Chrome, Firefox, Edge and Android play Ogg Opus.
-  Safari added it in 18.4 but reports describe it as incomplete, so Apple
-  devices should get the MP3 mount until tested.
-- The desktop app publishes both formats: tropicast/tc-station#36.
-
-`tests/gateway.sh` checks that an Ogg Opus source reaches listeners as
-`audio/ogg` and decodes as Opus.
-
-### Source authentication
-
-Broadcasters never use a shared password (issue #7). Each publish to
-`/stations/{station-id}/...` is checked by the control-plane endpoint in
-`ICECAST_SOURCE_AUTH_URL`, called with the node credentials in
-`ICECAST_SOURCE_AUTH_USER` and `ICECAST_SOURCE_AUTH_PASSWORD`. Icecast
-denies the source when the endpoint refuses, fails or does not answer
-within 15 seconds. `docs/source-auth.md` describes the contract the API
-must implement.
-
-For local runs, Compose starts `auth-stub`, which allows the
-`station-id:password` pairs in `STUB_STATIONS`:
+Compose runs Icecast (on localhost only), the TLS gateway on `*.localhost`
+with local certificates, and an auth stub that allows the
+`station-id:password` pairs in `STUB_STATIONS`. Publish a test tone:
 
 ```sh
 . ./.env
@@ -150,185 +64,49 @@ ffmpeg -re -f lavfi -i 'sine=frequency=440' -c:a libmp3lame -b:a 128k \
   "icecast://42:change-me@127.0.0.1:${ICECAST_PORT:-8000}/stations/42/live.mp3"
 ```
 
-`tests/source-auth.sh` checks the auth rules end to end and runs in CI.
-
-### TLS gateway
-
-Caddy (`caddy/Caddyfile`) is the only public entry point (issue #6). It
-runs in the same Compose project and reaches Icecast over the internal
-Docker network. It is built with the
-[layer4 module](https://github.com/mholt/caddy-l4) (`caddy/Dockerfile`).
-
-| Host | Allows | Everything else |
-|---|---|---|
-| `LISTEN_HOST` | `GET`/`HEAD`/`OPTIONS` on `/stations/{id}/live.(mp3\|opus)` | 404 |
-| `INGEST_HOST` | `PUT`/`SOURCE` on `/stations/{id}/live.(mp3\|opus)` | connection closed |
-
-The two hosts work differently:
-
-- **Listeners** go through Caddy's HTTP reverse proxy.
-- **Broadcasters** do not. Icecast source clients (the desktop app, BUTT,
-  Mixxx, FFmpeg's `icecast://`) send `PUT` or `SOURCE` with no
-  `Content-Length` and stream until they disconnect. An HTTP proxy forwards
-  no body for such a request. On `INGEST_HOST`, Caddy's layer4 route
-  decrypts TLS (HTTP/1.1 only), checks the request line and passes the raw
-  connection to Icecast. Chunked uploads (curl, FFmpeg's `https://`) work
-  too.
-
-- Streams are proxied with `flush_interval -1`, so audio is never
-  buffered. Caddy sets no timeout on long-lived streams.
-- Admin and status pages are never reachable from outside.
-- Listener responses carry `Access-Control-Allow-Origin: *` for the web
-  player, and every response carries HSTS.
-- The access log drops query strings, `Authorization` and `Cookie` headers.
-- Certificates come from Let's Encrypt. Set real hostnames, `ACME_EMAIL`,
-  `CADDY_BIND=0.0.0.0` and leave `CADDY_GLOBAL_OPTIONS` empty in
-  production. Locally, `.env.example` uses `*.localhost` with
-  `local_certs`.
-
-Against production, any Icecast source client works:
+## Build and test
 
 ```sh
-ffmpeg -re -f lavfi -i sine -c:a libmp3lame -b:a 64k \
-  -content_type audio/mpeg -f mp3 -tls 1 \
-  "icecast://42:<password>@ingest.example.com:443/stations/42/live.mp3"
+tests/source-auth.sh     # source auth rules end to end
+tests/gateway.sh         # TLS gateway: routing, both upload styles, headers, log redaction
+tests/station-limits.sh  # caps, plan formats and bitrates, reload keeping listeners
+tests/monitoring.sh      # exporter metrics and Icecast logs, against a local Prometheus and Loki
 ```
 
-FFmpeg's `icecast://` output does not pass `-ca_file` to its TLS layer, so
-it cannot trust a local gateway's certificate. Locally, publish with
-`tests/raw_source.py` (same protocol) instead:
+They build the images themselves (set `E2E_PREBUILT=1` to reuse them). CI
+workflows and what they run: [docs/how-to/build-and-test.md](docs/how-to/build-and-test.md).
 
-```sh
-ffmpeg -re -f lavfi -i sine -c:a libmp3lame -b:a 64k -f mp3 - |
-  python3 tests/raw_source.py ingest.localhost 443 /stations/42/live.mp3 \
-    42:change-me --ca root.crt   # root.crt: Caddy's local CA, see tests/gateway.sh
-```
+## Layout
 
-`tests/gateway.sh` checks routing, TLS, both upload styles, headers and log
-redaction end to end and runs in CI. `.github/workflows/caddy-image.yml`
-builds the Caddy image and publishes `ghcr.io/tropicast/caddy` from
-`main`.
+| Path                                                | Contents                                            |
+| --------------------------------------------------- | --------------------------------------------------- |
+| `Dockerfile`, `docker-entrypoint.py`, `icecast.xml` | Icecast image, config rendering, station mounts     |
+| `caddy/`                                            | Caddy image with the layer4 module, `Caddyfile`     |
+| `auth-stub/`                                        | Local source auth stand-in                          |
+| `exporter/`, `monitoring/`                          | Icecast exporter, alert rules and Grafana dashboard |
+| `infra/terraform`, `infra/ansible`                  | Hetzner node, hardening                             |
+| `deploy/`                                           | Production Compose file, `deploy.sh`, Alloy config  |
+| `tests/`, `tools/loadtest`                          | End-to-end tests, load test                         |
 
-### CI
+## Documentation
 
-Every workflow runs only when the files it covers change, so a docs-only
-change runs nothing. A newer push to a pull request cancels its running
-checks; runs on `main` always finish.
+| Topic                                                             | Covers                                                             |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [Icecast](docs/reference/icecast.md)                              | Image, production config, station limits, Opus mounts, source auth |
+| [TLS gateway](docs/reference/gateway.md)                          | Caddy routing for listen and ingest, headers, certificates         |
+| [Source auth contract](docs/source-auth.md)                       | The endpoint the control plane implements                          |
+| [Infrastructure and operations](docs/reference/infrastructure.md) | Terraform node, Ansible hardening, deploy, monitoring              |
+| [Runbook](docs/runbook.md)                                        | First-time setup, deploys, rollbacks, restarts, incidents          |
+| [Provision with CI](docs/how-to/provision-hetzner-with-ci.md)     | Terraform from GitHub Actions                                      |
+| [Set up monitoring](docs/how-to/set-up-monitoring.md)             | Grafana Cloud metrics, logs, alerts and dashboard                  |
+| [Build and test](docs/how-to/build-and-test.md)                   | CI workflows, image tags, caches                                   |
+| [Load test](docs/load-test.md)                                    | Capacity of one node                                               |
 
-| Workflow | Runs when | Does |
-|---|---|---|
-| `image.yml` | Icecast image files change (PR, `main`), `v*` tags | Build, health smoke test, Trivy. On `main`/tags, push `ghcr.io/tropicast/icecast` |
-| `caddy-image.yml` | `caddy/Dockerfile` changes (PR, `main`) | Build, layer4 check, Trivy. On `main`, push `ghcr.io/tropicast/caddy` |
-| `e2e.yml` | Images, Compose, auth stub or tests change | One job: builds both images once, runs `tests/source-auth.sh` and `tests/gateway.sh` |
-| `deploy-lint.yml`, `terraform.yml`, `ansible.yml` | Their own files change | Lint and validate |
+## Contributing
 
-Jobs run on GitHub-hosted `ubuntu-latest` runners. Workflows and tests use
-per-run image tags, Compose projects, ports and Docker config, so they never
-depend on what another job left behind.
-
-Images are tagged with the full git SHA (plus semver for Icecast tags); no
-`latest` tag is published. The `push` path filters of the two image
-workflows must match the path lists in `deploy.yml`, because a deploy uses
-the image of the last `main` commit that touched those paths.
-
-Builds share the GitHub Actions cache by image (`scope=icecast`,
-`scope=caddy`), so e2e and pull requests reuse what `main` built. The Trivy
-database is cached for a day. Run the e2e tests locally with
-`tests/source-auth.sh` and `tests/gateway.sh` (they build the images
-themselves unless `E2E_PREBUILT=1`).
-
-## MVP node (Terraform)
-
-`infra/terraform` provisions the MVP streaming node on Hetzner Cloud
-(issue #3):
-
-- 1× **CX33** (4 vCPU, 8 GB RAM, 20 TB egress included) in `fsn1`.
-- IPv4 and IPv6 primary IPs that outlive the server, so a rebuilt node keeps
-  its addresses and DNS.
-- A firewall that opens 80/443 (TCP, plus UDP 443 for HTTP/3) to everyone and
-  22 only to `admin_cidrs`. Icecast's port 8000 is never public.
-- Key-only SSH. Delete and rebuild protection on the server and IPs.
-- Optional `A`/`AAAA` records for `listen.<zone>` and `ingest.<zone>` in an
-  existing Hetzner DNS zone.
-
-Cost: about $10-14/month for the CX33 plus a small charge for the primary
-IPv4; egress above 20 TB is billed at about $1.12/TB. Check current Hetzner
-prices before applying.
-
-```sh
-cd infra/terraform
-cp backend.hcl.example backend.hcl            # remote state bucket
-cp terraform.tfvars.example terraform.tfvars  # keys, admin CIDRs, DNS zone
-export HCLOUD_TOKEN=...                       # Hetzner Cloud API token
-export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...  # state bucket keys
-terraform init -backend-config=backend.hcl
-terraform plan
-terraform apply
-```
-
-To provision from GitHub Actions instead, follow
-[docs/how-to/provision-hetzner-with-ci.md](docs/how-to/provision-hetzner-with-ci.md).
-
-`backend.hcl`, `terraform.tfvars` and state files are git-ignored. Delete
-protection must be turned off in `main.tf` before `terraform destroy` can
-remove the server or IPs.
-
-## Node hardening (Ansible)
-
-`infra/ansible/site.yml` prepares a node created by Terraform (issue #4):
-
-- Users: `ops` for admins (sudo) and `deploy` for the deploy pipeline (no
-  sudo, `docker` group). Membership of the `docker` group is
-  root-equivalent, so only the pipeline key logs in as `deploy`.
-- SSH: keys only, no root login, only `ops` and `deploy` allowed.
-  fail2ban bans repeated failures.
-- Unattended security upgrades, with automatic reboots turned **off**:
-  a reboot drops every listener. Reboot by hand in the maintenance window.
-- Time zone UTC with NTP sync.
-- Kernel tuning for many long-lived connections, BBR congestion control,
-  and a high open-file limit for services.
-- Docker Engine and the Compose plugin from Docker's apt repository.
-  `live-restore` keeps containers running while the Docker daemon
-  restarts. Logs rotate (`local` driver, 5 × 20 MB per container).
-  Containers get a 65536 open-file limit.
-- `/opt/tc-streaming`, owned by `deploy`, for the Compose project. Secrets
-  (`.env`) are written there at deploy time (#11) and never committed.
-
-```sh
-cd infra/ansible
-cp inventory.example.ini inventory.ini
-mkdir -p group_vars && cp group_vars_example.yml group_vars/streaming.yml
-uvx --from ansible ansible-playbook site.yml   # or: ansible-playbook site.yml
-```
-
-Run it first as `root`. That run turns off root login, so set
-`ansible_user=ops` in `inventory.ini` for later runs.
-
-## Deploy and operations
-
-`deploy/compose.yaml` is the production stack: Icecast from GHCR with no
-published port, and Caddy on ports 80/443. The **Deploy** workflow
-(`.github/workflows/deploy.yml`) ships it to the node and
-`deploy/deploy.sh` activates it, keeping the last 5 releases for rollback
-(issue #11).
-
-[docs/runbook.md](docs/runbook.md) covers first-time setup, deploys,
-rollbacks, what restarts what, and incidents.
-
-## Monitoring
-
-`exporter/icecast_exporter.py` (station listeners and bytes, Hetzner
-monthly traffic) and Grafana Alloy (`deploy/alloy/config.alloy`) run on the
-node with the Compose profile `monitoring` and push to Grafana Cloud.
-Alloy also ships Icecast's logs to Grafana Cloud Logs (#46), reading them
-through `docker-socket-proxy`, which only lets through the read calls log
-collection needs. The host's `/run` (with `docker.sock`) is hidden from
-Alloy, so it cannot go around the proxy.
-Alert rules (`monitoring/rules.yaml`, unit-tested with
-`monitoring/rules.test.yaml`) and a dashboard (`monitoring/dashboard.json`)
-are loaded there. See
-[docs/how-to/set-up-monitoring.md](docs/how-to/set-up-monitoring.md)
-(issue #10).
+One issue, one branch (`feat/…`, `fix/…`, `docs/…`, `ci/…`) and one pull
+request. CI must pass before review. Each workflow runs only when the files it
+covers change.
 
 ## License
 

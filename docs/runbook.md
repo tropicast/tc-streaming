@@ -3,7 +3,7 @@
 How to deploy, roll back and operate the MVP streaming node (issue #11).
 The node is created by Terraform
 ([how-to](how-to/provision-hetzner-with-ci.md)) and hardened by Ansible
-(README, *Node hardening*).
+([Node hardening](reference/infrastructure.md#node-hardening-ansible)).
 
 ## What runs on the node
 
@@ -215,7 +215,7 @@ Alloy and docker-socket-proxy run on the node with the Compose profile
 ## Change station limits
 
 Station caps, formats and bitrates live in `/opt/tc-streaming/stations.json`
-(see README, *Station limits*). Applying them never restarts Icecast.
+(see [Station limits](reference/icecast.md#station-limits)). Applying them never restarts Icecast.
 
 - **Control plane (normal):** the dashboard renders the file from its database
   and pushes it over SSH with a provisioning key, which the node restricts to
@@ -244,7 +244,7 @@ refuses new ones above the cap.
    primary IPs survive, so DNS needs no change.
 2. The new server has a new host key. Update `DEPLOY_KNOWN_HOSTS` (step 2
    above) and remove the old key locally: `ssh-keygen -R <ipv4>`.
-3. Run the Ansible playbook as `root` once (README, *Node hardening*).
+3. Run the Ansible playbook as `root` once ([Node hardening](reference/infrastructure.md#node-hardening-ansible)).
 4. Run the Deploy workflow.
 
 Caddy requests new certificates on the new node. Let's Encrypt allows 5
