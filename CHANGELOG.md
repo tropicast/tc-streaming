@@ -9,8 +9,14 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Changed
+
+- Icecast `<sources>` is 66 (50 live plus 16 AutoDJ mounts); set the control plane's `STREAMING_MAX_SOURCES` to the same. Deploying it restarts Icecast.
+- The playout service encodes with FFmpeg's libmp3lame and libopus: half the CPU of Liquidsoap's native encoders.
+
 ### Added
 
+- AutoDJ capacity (#65): `tests/load/playout-bench.sh`; the playout service is capped (`PLAYOUT_CPUS` 1.5, `PLAYOUT_MEMORY` 2g, 1,024 pids) and has half the CPU weight of Icecast and Caddy (`cpu_shares: 512`); about 8 AutoDJ stations per node.
 - AutoDJ playout service (`playout/`, Compose profile `autodj`): Liquidsoap 2.4.6 and a supervisor that polls the control plane's playout endpoint, caches tracks by sha256 and runs one Liquidsoap process per station on its AutoDJ mounts. Playlist changes apply without a restart; adding or removing a station leaves the others playing. Image `ghcr.io/tropicast/playout`, deployed and release-tagged with the others.
 - AutoDJ fallback mounts: `"autodj": true` in `stations.json` adds a hidden `/stations/{id}/autodj.{fmt}` mount per format; the live mount falls back to it when the DJ drops and takes listeners back when the DJ returns. Caddy never serves AutoDJ mounts.
 - Release workflow: a `v*` tag checks the changelog, adds version tags to the Icecast and Caddy images of that commit (same digests, nothing restarts) and drafts a GitHub Release. The version comes from the tag only.

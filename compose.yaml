@@ -73,6 +73,17 @@ services:
       PLAYOUT_USER: ${PLAYOUT_USER:-}
       PLAYOUT_PASSWORD: ${PLAYOUT_PASSWORD:-}
       PLAYOUT_POLL_SECONDS: ${PLAYOUT_POLL_SECONDS:-30}
+    # Bounded so AutoDJ can never starve Icecast or Caddy (#65). cpu_shares
+    # is the container's weight against the others (cgroup v2 cpu.weight 59
+    # vs 100): on a busy node, encoding waits, listeners do not. A nice value
+    # inside the container would not do that, it only orders processes within
+    # its own cgroup. Sizing: docs/load-test.md#autodj-playout.
+    cpus: ${PLAYOUT_CPUS:-1.5}
+    cpu_shares: 512
+    mem_limit: ${PLAYOUT_MEMORY:-2g}
+    # Threads count: about 28 per station (bench). 1024 lets memory be the
+    # limit that binds first (2g is about 20 stations), not this one.
+    pids_limit: 1024
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

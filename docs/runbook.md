@@ -291,7 +291,10 @@ gh variable set COMPOSE_PROFILES --body monitoring,autodj
 gh workflow run deploy.yml --ref main
 ```
 
-`PLAYOUT_USER` is optional (default `playout`). The deploy fails early when
+`PLAYOUT_USER` is optional (default `playout`), and so are `PLAYOUT_CPUS`
+and `PLAYOUT_MEMORY` (default `1.5` and `2g`; sizing in
+[load-test.md](load-test.md#autodj-playout)). Set the control plane's
+`STREAMING_MAX_SOURCES` to `66`, Icecast's `<sources>`. The deploy fails early when
 the `autodj` profile is on and `PLAYOUT_URL` or `PLAYOUT_PASSWORD` is
 missing. A station plays AutoDJ only when it has `"autodj": true` in
 `stations.json` (the mounts) and appears in the playout endpoint (the

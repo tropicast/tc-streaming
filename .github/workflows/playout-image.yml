@@ -63,7 +63,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=playout
 
       # The supervisor starts and refuses to run without its settings; Liquidsoap
-      # has the encoders the generated scripts use.
+      # has the FFmpeg encoders the generated scripts use.
       - name: Smoke test
         run: |
           image=tropicast-playout:ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -71,8 +71,8 @@ jobs:
           grep -q 'PLAYOUT_URL must be set' <<<"$out" || { echo "$out"; exit 1; }
           printf '%s\n' \
             'output.dummy(fallible=true, single("/dev/null"))' \
-            'output.file(%mp3(bitrate=128, samplerate=44100, stereo=false), "/tmp/a.mp3", mean(sine()))' \
-            'output.file(%ogg(%opus(bitrate=64, samplerate=48000, channels=2)), "/tmp/a.ogg", sine())' |
+            'output.file(%ffmpeg(format="mp3", %audio(codec="libmp3lame", b="128k", ar=44100, ac=1)), "/tmp/a.mp3", mean(sine()))' \
+            'output.file(%ffmpeg(format="ogg", %audio(codec="libopus", b="64k", ar=48000, ac=2)), "/tmp/a.ogg", sine())' |
             docker run --rm -i --entrypoint sh "$image" -c 'cat > /tmp/t.liq && liquidsoap --check /tmp/t.liq'
 
       # Reuse the vulnerability DB for a day instead of downloading it each run.

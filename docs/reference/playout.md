@@ -50,7 +50,14 @@ only the bitrate and channels can differ there; keep them equal too.
 Python 3 for the supervisor (`playout/supervisor.py`, standard library only).
 It runs as the image's `liquidsoap` user with a read-only root filesystem, no
 capabilities, a tmpfs for state (`/run/playout`) and a volume for the track
-cache (`/var/cache/playout`). It has no published port: it only connects out,
+cache (`/var/cache/playout`). It is capped at 1.5 CPUs and 2 GB
+(`PLAYOUT_CPUS`, `PLAYOUT_MEMORY`) and 1,024 processes and threads, and has
+half the CPU weight of the other containers (`cpu_shares: 512`, cgroup v2
+`cpu.weight` 59 against 100), so on a busy node Icecast and Caddy get the CPU
+first; about 8 stations fit per node
+([load test](../load-test.md#autodj-playout)).
+Outputs use FFmpeg's libmp3lame and libopus (`%ffmpeg`), half the CPU of
+Liquidsoap's native encoders. It has no published port: it only connects out,
 to Icecast on the internal Docker network and to the control plane.
 
 ## Supervisor
@@ -148,6 +155,7 @@ credentials. Body at most 8 MiB:
 | `PLAYOUT_POLL_SECONDS` | `30` | Poll interval |
 | `PLAYOUT_MAX_TRACK_MB` | `200` | Largest track accepted |
 | `PLAYOUT_ICECAST_HOST`, `PLAYOUT_ICECAST_PORT` | `icecast`, `8000` | Icecast on the internal network |
+| `PLAYOUT_CPUS`, `PLAYOUT_MEMORY` | `1.5`, `2g` | Compose limits of the service (deploy variables) |
 
 ## Secrets
 

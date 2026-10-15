@@ -270,11 +270,11 @@ def liq_string(value):
 
 
 def encoder(output):
+    """FFmpeg's libmp3lame and libopus: half the CPU of Liquidsoap's native
+    %mp3 and %ogg(%opus), mostly its resampler on the 48 kHz Opus path (#65)."""
     fmt, rate, channels, kbps = output["format"], output["sample_rate"], output["channels"], output["bitrate_kbps"]
-    stereo = "true" if channels == 2 else "false"
-    if fmt == "mp3":
-        return f"%mp3(bitrate={kbps}, samplerate={rate}, stereo={stereo})"
-    return f"%ogg(%opus(bitrate={kbps}, samplerate={rate}, channels={channels}))"
+    container, codec = ("mp3", "libmp3lame") if fmt == "mp3" else ("ogg", "libopus")
+    return f'%ffmpeg(format="{container}", %audio(codec="{codec}", b="{kbps}k", ar={rate}, ac={channels}))'
 
 
 def script(station_id, station, playlist):
@@ -293,7 +293,9 @@ def script(station_id, station, playlist):
     for output in station["outputs"]:
         fmt = output["format"]
         source = "mean(radio)" if output["channels"] == 1 else "radio"
-        extra = ', format="audio/ogg"' if fmt == "opus" else ""
+        # %ffmpeg hides the codec from Liquidsoap, so it cannot guess either: Ogg carries
+        # titles in the stream, MP3 needs Icecast's ICY metadata updates.
+        extra = ', format="audio/ogg"' if fmt == "opus" else ', format="audio/mpeg", send_icy_metadata=true'
         lines.append(
             f"output.icecast(id={liq_string(f'{station_id}-{fmt}')}, {encoder(output)}{extra}, "
             f"host={liq_string(ICECAST_HOST)}, port={ICECAST_PORT}, "

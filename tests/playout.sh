@@ -156,6 +156,26 @@ check "station 77: mono output" 1 \
 check "station 77: the track with a wrong sha256 is refused" yes \
     "$(logged playout 'track bad: download failed: sha256 does not match')"
 
+# Track titles reach the Opus mount in the Ogg stream's comments, which
+# %ffmpeg must keep writing (#65). Icecast's stats show what players get.
+mount_title() {
+    curl -s -m 3 -u "admin:$admin_password" "http://127.0.0.1:$port/admin/stats" |
+        python3 -c 'import sys, xml.etree.ElementTree as ET
+root = ET.fromstring(sys.stdin.read())
+for source in root.iter("source"):
+    if source.get("mount") == sys.argv[1]:
+        print(source.findtext("title") or "")' "$1" || true
+}
+wait_title() {
+    for _ in $(seq 1 20); do
+        [[ $(mount_title "$1") == "Track "* ]] && break
+        sleep 1
+    done
+    mount_title "$1"
+}
+check "station 42: the Opus mount shows the track title" yes \
+    "$([[ $(wait_title /stations/42/autodj.opus) == "Track "* ]] && echo yes || echo no)"
+
 check "station 99: a wrong AutoDJ credential is refused" no "$(mounted /stations/99/autodj.mp3)"
 check "station 99: the refusal comes from source auth" yes \
     "$(logged auth-stub 'mount=/stations/99/autodj.mp3 user=99 -> deny: wrong password')"
