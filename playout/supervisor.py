@@ -46,7 +46,6 @@ CACHE_DIR = Path(os.environ.get("PLAYOUT_CACHE_DIR", "/var/cache/playout"))
 STATE_DIR = Path(os.environ.get("PLAYOUT_STATE_DIR", "/run/playout"))
 HEALTH_FILE = STATE_DIR / "healthy"
 TICK_SECONDS = 2
-NICENESS = int(os.environ.get("PLAYOUT_NICENESS", "10"))
 # A Liquidsoap process that keeps exiting is restarted at most this often.
 RESTART_BACKOFF = (5, 10, 30, 60)
 
@@ -294,7 +293,9 @@ def script(station_id, station, playlist):
     for output in station["outputs"]:
         fmt = output["format"]
         source = "mean(radio)" if output["channels"] == 1 else "radio"
-        extra = f', format="{"audio/ogg" if fmt == "opus" else "audio/mpeg"}"'
+        # %ffmpeg hides the codec from Liquidsoap, so it cannot guess either: Ogg carries
+        # titles in the stream, MP3 needs Icecast's ICY metadata updates.
+        extra = ', format="audio/ogg"' if fmt == "opus" else ', format="audio/mpeg", send_icy_metadata=true'
         lines.append(
             f"output.icecast(id={liq_string(f'{station_id}-{fmt}')}, {encoder(output)}{extra}, "
             f"host={liq_string(ICECAST_HOST)}, port={ICECAST_PORT}, "
@@ -364,9 +365,7 @@ class Station:
         if time.monotonic() < self.next_start:
             return
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(self.dir), "AUTODJ_PASSWORD": self.password}
-        # Below Icecast and Caddy: on a busy node, encoding waits, listeners do not (#65).
-        command = ["nice", "-n", str(NICENESS), "liquidsoap", str(self.dir / "station.liq")]
-        self.process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL)
+        self.process = subprocess.Popen(["liquidsoap", str(self.dir / "station.liq")], env=env, stdin=subprocess.DEVNULL)
         self.started = time.monotonic()
         log(f"station {self.id}: started")
 

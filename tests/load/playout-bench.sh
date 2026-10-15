@@ -3,9 +3,12 @@
 # Runs Icecast, the auth and playout stubs and the playout image with N
 # AutoDJ stations, each publishing MP3 128 kbps (44.1 kHz stereo) and Ogg
 # Opus 64 kbps (48 kHz stereo) from pink-noise tracks, so the encoders work
-# as hard as with music. After a warm-up, samples `docker stats` every
-# 5 seconds and prints one CSV line per station count:
-#   stations,playout_cpu_pct,playout_mem_mb,icecast_cpu_pct,sources
+# as hard as with music. After a warm-up, samples `docker stats` (both
+# containers in one call, about 2 s) then waits 5 s, and prints one CSV line
+# per station count:
+#   stations,playout_cpu_pct,playout_mem_mb,playout_pids,icecast_cpu_pct,sources
+# playout_pids counts threads too, against the service's pids_limit. A count
+# whose mounts do not all come up fails the run instead of measuring fewer.
 # 100% CPU = one core. Run on the node type you plan for (tc-runner-1 is the
 # same Hetzner type as tc-stream-1):
 #   tests/load/playout-bench.sh 1 5 10 20
@@ -25,9 +28,10 @@ samples=${SAMPLES:-12}
 work=$(mktemp -d "$PWD/.tmp-bench.XXXXXX")
 stub=$work/stub
 env_file=$work/env
+compose() { docker compose -p "$project" --env-file "$env_file" -f compose.yaml -f tests/playout.compose.yaml "$@"; }
 # shellcheck disable=SC2317,SC2329 # called by the EXIT trap
 cleanup() {
-    compose down -v >/dev/null 2>&1
+    if [[ -f $env_file ]]; then compose down -v >/dev/null 2>&1 || true; fi
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -98,7 +102,6 @@ PLAYOUT_CPUS=${PLAYOUT_CPUS:-0}
 PLAYOUT_MEMORY=${PLAYOUT_MEMORY:-0}
 ENV
 
-compose() { docker compose -p "$project" --env-file "$env_file" -f compose.yaml -f tests/playout.compose.yaml "$@"; }
 build=(--build)
 [[ -n ${E2E_PREBUILT:-} ]] && build=()
 compose up -d "${build[@]}" --wait icecast auth-stub playout-stub playout >/dev/null
@@ -110,30 +113,41 @@ sources() {
     curl -s -m 3 -u "admin:$admin_password" "http://127.0.0.1:$port/admin/listmounts" |
         grep -o 'mount="/stations/b[0-9]*/autodj' | wc -l
 }
-# CPU % and memory MiB of container $1 from one `docker stats` sample.
+# One `docker stats` sample of the playout and Icecast containers, at the
+# same moment: "playout_cpu playout_mem_mib playout_pids icecast_cpu".
 stats() {
-    docker stats --no-stream --format '{{.CPUPerc}} {{.MemUsage}}' "$1" |
-        awk '{ cpu = $1; sub("%", "", cpu); mem = $2; unit = mem; gsub(/[0-9.]/, "", unit); sub(/[A-Za-z]+$/, "", mem)
-               if (unit == "GiB") mem *= 1024; else if (unit == "KiB") mem /= 1024; printf "%s %.1f\n", cpu, mem }'
+    docker stats --no-stream --format '{{.ID}} {{.CPUPerc}} {{.MemUsage}} {{.PIDs}}' "$playout" "$icecast" |
+        awk -v p="${playout:0:12}" '{ cpu = $2; sub("%", "", cpu)
+               if (substr($1, 1, 12) != p) { ice = cpu; next }
+               mem = $3; unit = mem; gsub(/[0-9.]/, "", unit); sub(/[A-Za-z]+$/, "", mem)
+               if (unit == "GiB") mem *= 1024; else if (unit == "KiB") mem /= 1024
+               pcpu = cpu; pmem = mem; pids = $NF }
+             END { printf "%s %.1f %s %s\n", pcpu, pmem, pids, ice }'
 }
 
-echo "stations,playout_cpu_pct,playout_mem_mb,icecast_cpu_pct,sources"
+echo "stations,playout_cpu_pct,playout_mem_mb,playout_pids,icecast_cpu_pct,sources"
 for n in "${counts[@]}"; do
     write_state "$n"
     for _ in $(seq 1 90); do
         [[ $(sources) -ge $((n * 2)) ]] && break
         sleep 1
     done
+    up=$(sources)
+    if ((up < n * 2)); then
+        echo "$n stations: only $up of $((n * 2)) AutoDJ mounts came up; not measured" >&2
+        compose logs --no-log-prefix --tail 20 playout >&2
+        exit 1
+    fi
     sleep "$warmup"
-    cpu_sum=0 mem_max=0 ice_sum=0
+    cpu_sum=0 mem_max=0 pids_max=0 ice_sum=0
     for _ in $(seq 1 "$samples"); do
-        read -r cpu mem < <(stats "$playout")
-        read -r ice _ < <(stats "$icecast")
+        read -r cpu mem pids ice < <(stats)
         cpu_sum=$(awk -v a="$cpu_sum" -v b="$cpu" 'BEGIN { print a + b }')
         ice_sum=$(awk -v a="$ice_sum" -v b="$ice" 'BEGIN { print a + b }')
         mem_max=$(awk -v a="$mem_max" -v b="$mem" 'BEGIN { print (b > a ? b : a) }')
+        ((pids > pids_max)) && pids_max=$pids
         sleep 5
     done
-    awk -v n="$n" -v c="$cpu_sum" -v m="$mem_max" -v i="$ice_sum" -v k="$samples" -v s="$(sources)" \
-        'BEGIN { printf "%d,%.1f,%.0f,%.1f,%d\n", n, c / k, m, i / k, s }'
+    awk -v n="$n" -v c="$cpu_sum" -v m="$mem_max" -v p="$pids_max" -v i="$ice_sum" -v k="$samples" -v s="$(sources)" \
+        'BEGIN { printf "%d,%.1f,%.0f,%d,%.1f,%d\n", n, c / k, m, p, i / k, s }'
 done

@@ -197,8 +197,9 @@ how many fit next to the listener load above.
 playout image with N stations, each publishing MP3 128 kbps (44.1 kHz
 stereo) and Ogg Opus 64 kbps (48 kHz stereo) from pink-noise tracks (the
 encoders work as hard as with music). After a 20 s warm-up it averages 12
-`docker stats` samples, 5 s apart, with no CPU or memory limit. 100% = one
-core. Measured on a laptop (Intel i7-8550U, 4 cores / 8 threads) on
+`docker stats` samples (one call for both containers, then 5 s), with no CPU
+or memory limit. 100% = one core. A station count whose mounts do not all come
+up within 90 s fails the run instead of being measured. Measured on a laptop (Intel i7-8550U, 4 cores / 8 threads) on
 2026-10-15; **not yet on a CX33**, see *Confirm on the node type* below.
 
 ### Encoders
@@ -231,8 +232,14 @@ each). Icecast barely notices: an AutoDJ mount is one more source.
 ### Limits and placement
 
 - **Limits** (`compose.yaml`, `deploy/compose.yaml`): `cpus: 1.5`
-  (`PLAYOUT_CPUS`), `mem_limit: 2g` (`PLAYOUT_MEMORY`), `pids_limit: 512`,
-  and Liquidsoap at `nice 10`. The ramp test used 0.6 core at 1,400
+  (`PLAYOUT_CPUS`), `mem_limit: 2g` (`PLAYOUT_MEMORY`), `pids_limit: 1024`,
+  and `cpu_shares: 512`: the container's CPU weight (cgroup v2 `cpu.weight`
+  59) is about half that of Icecast and Caddy (100), so they win on a busy
+  node. A `nice` value inside the container would not do this: it only orders
+  processes within the container's own cgroup. `pids_limit` counts threads:
+  about 28 per station (28, 109, 225 and 457 at 1, 4, 8 and 16 stations, on
+  an 8-thread machine, 2026-10-15), so 1,024 leaves memory as the limit that
+  binds first (2 GB is about 20 stations). The ramp test used 0.6 core at 1,400
   listeners (Icecast 0.15, Caddy 0.5) of the CX33's 4, so AutoDJ can never
   take the cores the listeners need. A playout service at its limit makes
   AutoDJ audio stutter; live stations are not affected.
