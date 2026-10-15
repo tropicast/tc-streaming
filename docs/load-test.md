@@ -186,6 +186,87 @@ figure. The control plane (tc-dashboard#10) uses **1.10** to estimate egress
 per station. The operator view uses the node's real `tx_bytes` against
 the quota, not the estimate.
 
+## AutoDJ playout
+
+Issue #65. What one AutoDJ station costs the `playout` service (#63), and
+how many fit next to the listener load above.
+
+### Method
+
+`tests/load/playout-bench.sh 1 5 10 15` runs Icecast, the stubs and the
+playout image with N stations, each publishing MP3 128 kbps (44.1 kHz
+stereo) and Ogg Opus 64 kbps (48 kHz stereo) from pink-noise tracks (the
+encoders work as hard as with music). After a 20 s warm-up it averages 12
+`docker stats` samples, 5 s apart, with no CPU or memory limit. 100% = one
+core. Measured on a laptop (Intel i7-8550U, 4 cores / 8 threads) on
+2026-10-15; **not yet on a CX33**, see *Confirm on the node type* below.
+
+### Encoders
+
+One station, per encoder, from `cpu.stat` over 30 s:
+
+| Part | Native Liquidsoap encoders | FFmpeg encoders (`%ffmpeg`) |
+|---|---|---|
+| Decode and Liquidsoap itself | 3% | 3% |
+| MP3 128 kbps | 5% | |
+| Ogg Opus 64 kbps, 44.1 to 48 kHz | 10% (most of it the resampler) | |
+| Both outputs | **20%** | **10%** |
+
+Lower LAME quality (`internal_quality=5`) saved 4 points and Opus
+`complexity=5` none: the cost was Liquidsoap's resampler. The playout
+service uses FFmpeg's libmp3lame and libopus.
+
+### Per station
+
+| Stations | Playout CPU | Playout memory | Icecast CPU |
+|---|---|---|---|
+| 1 | 9% | 105 MB | 4% |
+| 5 | 42% | 466 MB | 4% |
+| 10 | 74% | 918 MB | 7% |
+| 15 | 91% | 1,382 MB | 6% |
+
+About **6–9% of a core and 92 MB per station** (one Liquidsoap process
+each). Icecast barely notices: an AutoDJ mount is one more source.
+
+### Limits and placement
+
+- **Limits** (`compose.yaml`, `deploy/compose.yaml`): `cpus: 1.5`
+  (`PLAYOUT_CPUS`), `mem_limit: 2g` (`PLAYOUT_MEMORY`), `pids_limit: 512`,
+  and Liquidsoap at `nice 10`. The ramp test used 0.6 core at 1,400
+  listeners (Icecast 0.15, Caddy 0.5) of the CX33's 4, so AutoDJ can never
+  take the cores the listeners need. A playout service at its limit makes
+  AutoDJ audio stutter; live stations are not affected.
+- **Threshold: 8 AutoDJ stations per node** (MP3 + Opus each), assuming up
+  to 15% of a shared CX33 vCPU per station: 1.2 cores and about 750 MB,
+  inside the limits with room to spare. The source budget allows 16
+  single-format AutoDJ stations, which still fit: about 1.5 GB and 0.8 core.
+- **`<sources>` is 66**: 50 live mounts as before, plus 16 AutoDJ mounts.
+  The control plane counts AutoDJ mounts in `STREAMING_MAX_SOURCES`
+  (tc-dashboard `NodeCapacity`), so set it to **66** together with this
+  release. Deploying the change restarts Icecast (quiet hour).
+- **Beyond 8 stations:** run playout on its own node on the private network,
+  feeding the streaming node's Icecast. Not built yet: one node carries
+  the AutoDJ stations of the MVP.
+- Later, to fit more per node: one Liquidsoap process for several stations
+  would save most of the 92 MB each, at the cost of the isolation between
+  stations.
+
+### Confirm on the node type
+
+Before relying on the threshold, run on `tc-runner-1` (same Hetzner type as
+`tc-stream-1`):
+
+```sh
+tests/load/playout-bench.sh 1 4 8 12
+```
+
+Then the acceptance test, on the production node in a quiet hour: enable
+AutoDJ for 8 test stations, run the 1,400-listener ramp from *Reproduce*
+against a live station, and compare the listeners' time to first audio,
+drops and errors, and Icecast's CPU, with the ramp test above. If the CX33
+needs more than 15% per station, lower the threshold (and
+`STREAMING_MAX_SOURCES`) accordingly.
+
 ## Reproduce
 
 ```sh

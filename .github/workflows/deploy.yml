@@ -155,6 +155,9 @@ jobs:
           # AutoDJ (#63): the control plane's playout endpoint on the private network.
           PLAYOUT_URL: ${{ vars.PLAYOUT_URL }}
           PLAYOUT_USER: ${{ vars.PLAYOUT_USER || 'playout' }}
+          # Optional caps of the playout service (#65); empty = the Compose defaults.
+          PLAYOUT_CPUS: ${{ vars.PLAYOUT_CPUS }}
+          PLAYOUT_MEMORY: ${{ vars.PLAYOUT_MEMORY }}
           # Private-network address (tc-dashboard infra): the exporter listens there for the control plane.
           PRIVATE_IP: ${{ vars.PRIVATE_IP }}
         run: |
@@ -177,7 +180,7 @@ jobs:
             done
           fi
           names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS
-                 PLAYOUT_URL PLAYOUT_USER PLAYOUT_PASSWORD
+                 PLAYOUT_URL PLAYOUT_USER PLAYOUT_PASSWORD PLAYOUT_CPUS PLAYOUT_MEMORY
                  GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_LOKI_URL
                  GRAFANA_CLOUD_LOKI_USER GRAFANA_CLOUD_TOKEN
                  HCLOUD_READ_TOKEN NODE_NAME PRIVATE_IP)

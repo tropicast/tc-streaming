@@ -81,6 +81,11 @@ services:
       PLAYOUT_URL: ${PLAYOUT_URL:-}
       PLAYOUT_USER: ${PLAYOUT_USER:-}
       PLAYOUT_PASSWORD: ${PLAYOUT_PASSWORD:-}
+    # Bounded so AutoDJ can never starve Icecast or Caddy (#65); Liquidsoap
+    # also runs at nice 10. Sizing: docs/load-test.md#autodj-playout.
+    cpus: ${PLAYOUT_CPUS:-1.5}
+    mem_limit: ${PLAYOUT_MEMORY:-2g}
+    pids_limit: 512
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

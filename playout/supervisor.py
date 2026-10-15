@@ -46,6 +46,7 @@ CACHE_DIR = Path(os.environ.get("PLAYOUT_CACHE_DIR", "/var/cache/playout"))
 STATE_DIR = Path(os.environ.get("PLAYOUT_STATE_DIR", "/run/playout"))
 HEALTH_FILE = STATE_DIR / "healthy"
 TICK_SECONDS = 2
+NICENESS = int(os.environ.get("PLAYOUT_NICENESS", "10"))
 # A Liquidsoap process that keeps exiting is restarted at most this often.
 RESTART_BACKOFF = (5, 10, 30, 60)
 
@@ -270,11 +271,11 @@ def liq_string(value):
 
 
 def encoder(output):
+    """FFmpeg's libmp3lame and libopus: half the CPU of Liquidsoap's native
+    %mp3 and %ogg(%opus), mostly its resampler on the 48 kHz Opus path (#65)."""
     fmt, rate, channels, kbps = output["format"], output["sample_rate"], output["channels"], output["bitrate_kbps"]
-    stereo = "true" if channels == 2 else "false"
-    if fmt == "mp3":
-        return f"%mp3(bitrate={kbps}, samplerate={rate}, stereo={stereo})"
-    return f"%ogg(%opus(bitrate={kbps}, samplerate={rate}, channels={channels}))"
+    container, codec = ("mp3", "libmp3lame") if fmt == "mp3" else ("ogg", "libopus")
+    return f'%ffmpeg(format="{container}", %audio(codec="{codec}", b="{kbps}k", ar={rate}, ac={channels}))'
 
 
 def script(station_id, station, playlist):
@@ -293,7 +294,7 @@ def script(station_id, station, playlist):
     for output in station["outputs"]:
         fmt = output["format"]
         source = "mean(radio)" if output["channels"] == 1 else "radio"
-        extra = ', format="audio/ogg"' if fmt == "opus" else ""
+        extra = f', format="{"audio/ogg" if fmt == "opus" else "audio/mpeg"}"'
         lines.append(
             f"output.icecast(id={liq_string(f'{station_id}-{fmt}')}, {encoder(output)}{extra}, "
             f"host={liq_string(ICECAST_HOST)}, port={ICECAST_PORT}, "
@@ -363,7 +364,9 @@ class Station:
         if time.monotonic() < self.next_start:
             return
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(self.dir), "AUTODJ_PASSWORD": self.password}
-        self.process = subprocess.Popen(["liquidsoap", str(self.dir / "station.liq")], env=env, stdin=subprocess.DEVNULL)
+        # Below Icecast and Caddy: on a busy node, encoding waits, listeners do not (#65).
+        command = ["nice", "-n", str(NICENESS), "liquidsoap", str(self.dir / "station.liq")]
+        self.process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL)
         self.started = time.monotonic()
         log(f"station {self.id}: started")
 

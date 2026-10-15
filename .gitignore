@@ -11,4 +11,5 @@ infra/ansible/group_vars/
 .tmp-limits.*/
 .tmp-playout.*/
 .tmp-autodj.*/
+.tmp-bench.*/
 **/graphify-out

@@ -103,7 +103,9 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   counts toward `<sources>`.
 - Capacity planning (which station goes on which node, refusing a full
   node) stays in the control plane; this repository only applies the
-  limits. Icecast's global `<sources>` limit (50) is the hard ceiling.
+  limits. Icecast's global `<sources>` limit (66: 50 live plus 16 AutoDJ
+  mounts, #65) is the hard ceiling; the control plane's
+  `STREAMING_MAX_SOURCES` must equal it.
 
 Locally, Compose mounts `deploy/stations.example.json` (override with
 `STATIONS_JSON`). `tests/station-limits.sh` checks caps, the default cap,
