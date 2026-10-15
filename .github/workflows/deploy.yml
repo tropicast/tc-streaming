@@ -138,7 +138,8 @@ jobs:
           ICECAST_RELAY_PASSWORD: ${{ secrets.ICECAST_RELAY_PASSWORD }}
           ICECAST_SOURCE_AUTH_PASSWORD: ${{ secrets.ICECAST_SOURCE_AUTH_PASSWORD }}
           STUB_STATIONS: ${{ secrets.STUB_STATIONS }}
-          PLAYOUT_PASSWORD: ${{ secrets.PLAYOUT_PASSWORD }}
+          # The control plane accepts the node credentials of source auth on the playout endpoint.
+          PLAYOUT_PASSWORD: ${{ secrets.PLAYOUT_PASSWORD || secrets.ICECAST_SOURCE_AUTH_PASSWORD }}
           GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
           HCLOUD_READ_TOKEN: ${{ secrets.HCLOUD_READ_TOKEN }}
           GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
@@ -154,7 +155,7 @@ jobs:
           COMPOSE_PROFILES: ${{ vars.COMPOSE_PROFILES }}
           # AutoDJ (#63): the control plane's playout endpoint on the private network.
           PLAYOUT_URL: ${{ vars.PLAYOUT_URL }}
-          PLAYOUT_USER: ${{ vars.PLAYOUT_USER || 'playout' }}
+          PLAYOUT_USER: ${{ vars.PLAYOUT_USER || vars.ICECAST_SOURCE_AUTH_USER || 'icecast' }}
           # Optional caps of the playout service (#65); empty = the Compose defaults.
           PLAYOUT_CPUS: ${{ vars.PLAYOUT_CPUS }}
           PLAYOUT_MEMORY: ${{ vars.PLAYOUT_MEMORY }}

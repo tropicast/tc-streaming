@@ -4,8 +4,8 @@ Polls the control plane's playout endpoint (docs/reference/playout.md) and
 runs one Liquidsoap process per AutoDJ station. Each process publishes the
 station's playlist to its hidden /stations/<id>/autodj.<fmt> mounts (#62).
 
-- Tracks are downloaded once into a cache keyed by their sha256, checked,
-  and listed in a per-station m3u that Liquidsoap reloads on change: a new
+- Tracks are downloaded once into a cache keyed by their sha256 (checked),
+  or by their id when the endpoint sends no sha256, and listed in a per-station m3u that Liquidsoap reloads on change: a new
   playlist never restarts the station.
 - A change of outputs, shuffle mode or credential restarts that station
   only. Adding or removing a station never touches the others.
@@ -71,7 +71,7 @@ def log(message):
 
 # Counters for /metrics; written by the main loop only.
 STATS = {"track_failures": 0, "reconcile_failures": 0, "endpoint_up": 0, "last_sync": 0.0, "cache_bytes": 0}
-# Tracks failing now, by id and sha256: a track counts once per failure, not
+# Tracks failing now, by id and cache key: a track counts once per failure, not
 # once per poll it is retried on.
 FAILING_TRACKS = set()
 
@@ -142,13 +142,16 @@ def parse_tracks(where, tracks):
         track_id, sha, url = track.get("id"), track.get("sha256"), track.get("url")
         if not isinstance(track_id, str) or not TRACK_ID.match(track_id):
             raise InvalidState(f"{where}: invalid track id")
-        if not isinstance(sha, str) or not SHA256.match(sha):
-            raise InvalidState(f"{where}: track {track_id} needs a lowercase hex sha256")
+        # Optional: the control plane may not hash its files. Its track ids
+        # then name content that never changes, so they key the cache.
+        if sha is not None and (not isinstance(sha, str) or not SHA256.match(sha)):
+            raise InvalidState(f"{where}: track {track_id} sha256 must be lowercase hex")
         if not isinstance(url, str) or not url.startswith(("https://", "http://")):
             raise InvalidState(f"{where}: track {track_id} needs an http(s) url")
         parsed.append({
             "id": track_id,
             "sha256": sha,
+            "cache_key": sha or f"id_{track_id}",
             "url": url,
             "title": clean_text(track.get("title")),
             "artist": clean_text(track.get("artist")),
@@ -222,8 +225,8 @@ def sniff_extension(path):
     return None
 
 
-def cached(sha):
-    for path in CACHE_DIR.glob(f"{sha}.*"):
+def cached(key):
+    for path in CACHE_DIR.glob(f"{key}.*"):
         return path
     return None
 
@@ -236,8 +239,8 @@ def download(track):
     """Path of the track in the cache, downloading it if needed; None on failure."""
     # A first sync of a large library takes a while: the loop is still alive.
     heartbeat()
-    key = (track["id"], track["sha256"])
-    path = cached(track["sha256"])
+    key = (track["id"], track["cache_key"])
+    path = cached(track["cache_key"])
     if path:
         FAILING_TRACKS.discard(key)
         return path
@@ -253,13 +256,13 @@ def download(track):
                         raise RuntimeError(f"larger than {MAX_TRACK_BYTES // (1024 * 1024)} MiB")
                     digest.update(chunk)
                     tmp.write(chunk)
-            if digest.hexdigest() != track["sha256"]:
+            if track["sha256"] and digest.hexdigest() != track["sha256"]:
                 raise RuntimeError("sha256 does not match")
             tmp.close()
             extension = sniff_extension(tmp.name)
             if not extension:
                 raise RuntimeError("not an mp3, ogg, flac, wav or m4a file")
-            path = CACHE_DIR / f"{track['sha256']}.{extension}"
+            path = CACHE_DIR / f"{track['cache_key']}.{extension}"
             os.replace(tmp.name, path)
             FAILING_TRACKS.discard(key)
             return path

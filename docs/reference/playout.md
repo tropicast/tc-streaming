@@ -154,7 +154,7 @@ credentials. Body at most 8 MiB:
       "tracks": [
         {
           "id": "trk_8f2c",
-          "sha256": "<lowercase hex of the file>",
+          "sha256": "<lowercase hex of the file, optional>",
           "url": "https://<bucket>/...?X-Amz-Signature=...",
           "title": "Title",
           "artist": "Artist"
@@ -177,7 +177,9 @@ credentials. Body at most 8 MiB:
   `channels`: 1 or 2. Each format needs the station's `"autodj": true` in
   `stations.json`, which renders the mounts.
 - `tracks`: in playlist order (`shuffle` false) or shuffled per pass.
-  `id`: `[A-Za-z0-9_-]{1,64}`. `url`: fetched with a plain `GET`, no
+  `id`: `[A-Za-z0-9_-]{1,64}`. `sha256` (optional): checked after the
+  download and keys the cache; without it the `id` keys the cache, so an id
+  must always name the same file. `url`: fetched with a plain `GET`, no
   credentials; give it a lifetime of at least a few minutes, because a large
   first sync downloads tracks one after another. A changed URL for the same
   sha256 does not download again. `title` and `artist` (optional) become the
@@ -190,9 +192,9 @@ credentials. Body at most 8 MiB:
 
 | Variable | Default | |
 |---|---|---|
-| `PLAYOUT_URL` | none | Control plane endpoint, `http(s)://`, no credentials in it |
-| `PLAYOUT_USER` | `playout` (deploy workflow) | Node user for the endpoint |
-| `PLAYOUT_PASSWORD` | none | Node password for the endpoint (secret) |
+| `PLAYOUT_URL` | none | Control plane endpoint, `http(s)://`, no credentials in it; tc-dashboard: `http://<private ip>:8081/internal/playout/stations` |
+| `PLAYOUT_USER` | `ICECAST_SOURCE_AUTH_USER` (deploy workflow) | Node user for the endpoint |
+| `PLAYOUT_PASSWORD` | `ICECAST_SOURCE_AUTH_PASSWORD` (deploy workflow) | Node password for the endpoint (secret) |
 | `PLAYOUT_POLL_SECONDS` | `30` | Poll interval |
 | `PLAYOUT_MAX_TRACK_MB` | `200` | Largest track accepted |
 | `PLAYOUT_ICECAST_HOST`, `PLAYOUT_ICECAST_PORT` | `icecast`, `8000` | Icecast on the internal network |

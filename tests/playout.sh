@@ -34,8 +34,8 @@ declare -A secret
 for station in 42 77 88 99; do secret[$station]=$(openssl rand -hex 16); done
 wrong99=$(openssl rand -hex 16)
 
-# Tracks: an MP3 and a FLAC (types are sniffed from the content), and one
-# whose sha256 the control plane gets wrong.
+# Tracks: an MP3 and a FLAC (types are sniffed from the content), one
+# whose sha256 the control plane gets wrong, and one sent without sha256.
 ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=20" -c:a libmp3lame -b:a 128k "$stub/tracks/t1.mp3"
 ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=660:duration=20" "$stub/tracks/t2.flac"
 cp "$stub/tracks/t1.mp3" "$stub/tracks/bad.mp3"
@@ -49,9 +49,12 @@ from pathlib import Path
 stub, ids, tracks42, s42, s77, s88, w99 = sys.argv[1:]
 tracks = Path(stub, "tracks")
 def track(track_id, name, sha=None):
-    return {"id": track_id, "url": f"http://playout-stub:9001/tracks/{name}",
-            "sha256": sha or hashlib.sha256((tracks / name).read_bytes()).hexdigest(),
-            "title": f"Track {track_id}", "artist": "Tropicast"}
+    result = {"id": track_id, "url": f"http://playout-stub:9001/tracks/{name}",
+              "sha256": sha or hashlib.sha256((tracks / name).read_bytes()).hexdigest(),
+              "title": f"Track {track_id}", "artist": "Tropicast"}
+    if sha == "":
+        del result["sha256"]
+    return result
 files = {"t1": "t1.mp3", "t2": "t2.flac"}
 stereo = lambda fmt, kbps, rate: {"format": fmt, "bitrate_kbps": kbps, "sample_rate": rate, "channels": 2}
 stations = {
@@ -59,7 +62,8 @@ stations = {
            "tracks": [track(t, files[t]) for t in tracks42.split()]},
     "77": {"password": s77, "shuffle": True,
            "outputs": [{"format": "mp3", "bitrate_kbps": 64, "sample_rate": 44100, "channels": 1}],
-           "tracks": [track("t1", "t1.mp3"), track("bad", "bad.mp3", "0" * 64)]},
+           # t1 without sha256: the only track 77 can play.
+           "tracks": [track("t1", "t1.mp3", ""), track("bad", "bad.mp3", "0" * 64)]},
     "88": {"password": s88, "outputs": [stereo("mp3", 128, 44100)], "tracks": [track("t2", "t2.flac")]},
     "99": {"password": w99, "outputs": [stereo("mp3", 128, 44100)], "tracks": [track("t1", "t1.mp3")]},
 }
@@ -153,6 +157,8 @@ check "station 42: Opus output decodes as opus" opus \
 curl -s -o "$work/77.mp3" -m 4 "http://127.0.0.1:$port/stations/77/live.mp3" || true
 check "station 77: mono output" 1 \
     "$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$work/77.mp3" 2>/dev/null || echo none)"
+check "station 77: a track without sha256 is cached by id" yes \
+    "$(compose exec -T playout sh -c 'ls /var/cache/playout' 2>/dev/null | grep -q '^id_t1\.' && echo yes || echo no)"
 check "station 77: the track with a wrong sha256 is refused" yes \
     "$(logged playout 'track bad: download failed: sha256 does not match')"
 
