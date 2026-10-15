@@ -71,6 +71,19 @@ sleep 3
 bytes=$(curl -s -m 2 -o /dev/null -w '%{size_download}' "http://127.0.0.1:$port/stations/77/live.mp3" || true)
 check "listener receives audio from a live mount" yes "$([[ ${bytes:-0} -gt 0 ]] && echo yes || echo no)"
 check "second source on a live mount is rejected" denied "$(publish "77:$secret77" /stations/77/live.mp3)"
+
+# ICY metadata updates (#72): the station's own credentials set its title;
+# nobody else's do, and they open no other admin command.
+metadata() {
+    curl -s -o /dev/null -w '%{http_code}' -u "$1" \
+        "http://127.0.0.1:$port/admin/metadata?mount=%2Fstations%2F77%2Flive.mp3&mode=updinfo&song=${2:-Title}${3:-}" || true
+}
+check "the station sets its title" 200 "$(metadata "77:$secret77")"
+check "another station cannot set its title" 401 "$(metadata "42:$secret42")"
+check "a wrong password cannot set its title" 401 "$(metadata "77:wrong")"
+check "a second mount in the query is refused" 401 "$(metadata "42:$secret42" Title '&mount=%2Fstations%2F42%2Flive.mp3')"
+check "station credentials open no other admin command" 401 \
+    "$(curl -s -o /dev/null -w '%{http_code}' -u "77:$secret77" "http://127.0.0.1:$port/admin/stats?mount=%2Fstations%2F77%2Flive.mp3" || true)"
 wait "$live_pid" || true
 
 compose stop auth-stub >/dev/null

@@ -13,7 +13,7 @@ must reject requests without these node credentials.
 
 | Field | Example | Meaning |
 |---|---|---|
-| `action` | `stream_auth` | Always `stream_auth` for a source connect |
+| `action` | `stream_auth` | `stream_auth` for a source connect; `metadata_auth` for a [metadata update](#metadata-updates) |
 | `mount` | `/stations/42/live.mp3` | Requested mount |
 | `user` | `42` | Username sent by the desktop app |
 | `pass` | `…` | Station broadcast credential |
@@ -48,6 +48,31 @@ The endpoint must allow a request only when all of these hold:
 5. The declared bitrate (`header.ice-bitrate`, else `bitrate=` in
    `header.ice-audio-info`) is not above the plan's limit. A source that
    declares nothing is allowed; egress monitoring (#10) catches abuse.
+
+## Metadata updates
+
+MP3 sources (Liquidsoap, BUTT, Mixxx) send track titles apart from the
+audio: `GET /admin/metadata?mode=updinfo&mount=/stations/42/live.mp3&song=…`
+with the source's username and password (#72). Ogg sources carry titles in
+the stream and do not send them. Icecast calls the same endpoint with
+`action=metadata_auth`, and `mount` is then that request's URI, path and
+query, for example
+`/admin/metadata?mode=updinfo&mount=/stations/42/autodj.mp3&charset=UTF-8&song=Artist%20-%20Title`.
+There are no `header.*` fields.
+
+The endpoint must allow it only when:
+
+1. The URI's path is `/admin/metadata`, its query has `mode=updinfo` and
+   exactly one `mount`. Read the query parameters, URL-decoded.
+2. That `mount` and the `user` and `pass` pass rules 1–4 above, as for a
+   source connect to that mount: the station's broadcast credential on its
+   live mounts, its AutoDJ credential on its AutoDJ mounts.
+
+It is not a new session: record nothing, and leave the encoding pinned by
+the source as it is. A deny is answered like any other; Icecast then
+answers the source 401 and keeps the previous title. Icecast sends nothing
+else to this role: listener requests and other admin commands never match it
+(`icecast.xml`, `match-admin="metadata"`).
 
 ## Failure behaviour
 

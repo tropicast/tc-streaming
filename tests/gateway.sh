@@ -22,9 +22,10 @@ ca=$work/root.crt
 trap '[[ -n ${KEEP:-} ]] || docker compose -p "$project" --env-file "$env_file" down -v >/dev/null 2>&1; rm -rf "$work"' EXIT
 
 secret=$(openssl rand -hex 16)
+admin_password=$(openssl rand -hex 24)
 cat >"$env_file" <<ENV
 ICECAST_SOURCE_PASSWORD=$(openssl rand -hex 24)
-ICECAST_ADMIN_PASSWORD=$(openssl rand -hex 24)
+ICECAST_ADMIN_PASSWORD=$admin_password
 ICECAST_SOURCE_AUTH_USER=icecast
 ICECAST_SOURCE_AUTH_PASSWORD=$(openssl rand -hex 24)
 ICECAST_PORT=${TEST_ICECAST_PORT:-$(free_port)}
@@ -146,6 +147,26 @@ check "audio keeps flowing (>= 30 KB in 5 s)" yes "$([[ ${bytes:-0} -ge 30000 ]]
 headers=$(curl -s -D - -o /dev/null -m 2 --cacert "$ca" "${pin[@]}" "$listen/stations/42/live.mp3" || true)
 check "CORS header is set" yes "$(grep -qi '^access-control-allow-origin: \*' <<<"$headers" && echo yes || echo no)"
 check "HSTS header is set" yes "$(grep -qi '^strict-transport-security:' <<<"$headers" && echo yes || echo no)"
+
+# Track titles (#72): an MP3 source's metadata update of its live mount
+# passes the gateway; Icecast checks it with the control plane.
+metadata() {
+    status -u "$1" "$ingest/admin/metadata?mount=%2Fstations%2F42%2F$2&mode=updinfo&song=Gateway%20Song"
+}
+# The title Icecast holds for 42's live MP3 mount, read on the internal network.
+live_title() {
+    compose exec -T auth-stub python3 -c 'import base64, sys, urllib.request, xml.etree.ElementTree as ET
+request = urllib.request.Request("http://icecast:8000/admin/stats", headers={"Authorization": "Basic " + base64.b64encode(("admin:" + sys.argv[1]).encode()).decode()})
+for source in ET.fromstring(urllib.request.urlopen(request).read()).iter("source"):
+    if source.get("mount") == "/stations/42/live.mp3":
+        print(source.findtext("title") or "")' "$admin_password" 2>/dev/null || true
+}
+check "a wrong credential cannot set the title" 401 "$(metadata 42:wrong live.mp3)"
+check "the source sets its live title through the gateway" 200 "$(metadata "42:$secret" live.mp3)"
+check "Icecast shows the title" "Gateway Song" "$(live_title)"
+check "ingest host closes metadata updates of AutoDJ mounts" 000 "$(metadata "42:$secret" autodj.mp3)"
+check "ingest host closes other admin commands" 000 \
+    "$(status -u "42:$secret" "$ingest/admin/stats?mount=%2Fstations%2F42%2Flive.mp3")"
 wait
 
 basic=$(printf '42:%s' "$secret" | base64)

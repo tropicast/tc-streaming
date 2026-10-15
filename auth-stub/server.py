@@ -10,7 +10,7 @@ import json
 import os
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 # Live mounts, and the AutoDJ mounts the playout worker feeds (#62). The stub
 # accepts the station credential on both; the control plane uses a separate
@@ -52,7 +52,26 @@ EXPECTED_AUTH = "Basic " + base64.b64encode(
 ).decode()
 
 
+def metadata_mount(uri):
+    """
+    The station mount of an ICY metadata update (action metadata_auth, #72),
+    whose `mount` field is the request URI: /admin/metadata?mount=...&mode=updinfo.
+    None for anything else, or when the query names more than one mount.
+    """
+    parts = urlsplit(uri)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    if parts.path != "/admin/metadata" or query.get("mode") != ["updinfo"] or len(query.get("mount", [])) != 1:
+        return None
+    return query["mount"][0]
+
+
 def allowed(fields):
+    if fields.get("action") == "metadata_auth":
+        # A title update: the same credentials as the source, on its mount.
+        mount = metadata_mount(fields.get("mount", ""))
+        if mount is None:
+            return False, "not a metadata update of one mount"
+        fields = {**fields, "mount": mount}
     match = MOUNT.match(fields.get("mount", ""))
     if not match:
         return False, "mount outside /stations/{id}/(live|autodj).(mp3|opus)"
