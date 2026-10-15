@@ -35,10 +35,14 @@ must reject requests without these node credentials.
 
 The endpoint must allow a request only when all of these hold:
 
-1. `mount` matches `/stations/{station-id}/live.(mp3|opus)`.
+1. `mount` matches `/stations/{station-id}/live.(mp3|opus)`, or
+   `/stations/{station-id}/autodj.(mp3|opus)` for a station with AutoDJ (#62).
 2. `user` is that station's ID.
-3. `pass` matches the station's current, unrevoked credential. Compare in
-   constant time.
+3. `pass` matches the station's current, unrevoked credential for that
+   mount: a broadcast credential for `live`, the station's AutoDJ credential
+   for `autodj` (tc-dashboard#106). Neither is accepted on the other mount.
+   Compare in constant time. The auth stub accepts the station credential
+   on both.
 4. The station's plan allows the requested format (`mp3` or `opus`, from
    the mount).
 5. The declared bitrate (`header.ice-bitrate`, else `bitrate=` in

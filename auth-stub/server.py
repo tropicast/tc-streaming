@@ -12,7 +12,10 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
-MOUNT = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]{1,64})/live\.(mp3|opus)$")
+# Live mounts, and the AutoDJ mounts the playout worker feeds (#62). The stub
+# accepts the station credential on both; the control plane uses a separate
+# AutoDJ credential (tc-dashboard#106).
+MOUNT = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]{1,64})/(?:live|autodj)\.(mp3|opus)$")
 
 
 def load_stations():
@@ -52,7 +55,7 @@ EXPECTED_AUTH = "Basic " + base64.b64encode(
 def allowed(fields):
     match = MOUNT.match(fields.get("mount", ""))
     if not match:
-        return False, "mount outside /stations/{id}/live.(mp3|opus)"
+        return False, "mount outside /stations/{id}/(live|autodj).(mp3|opus)"
     station = match["station"]
     secret = STATIONS.get(station)
     if secret is None or fields.get("user") != station:

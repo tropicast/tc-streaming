@@ -90,13 +90,25 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   it from most apps. Values are checked: text without control characters
   (C0, DEL, C1, line separators), http(s) URLs, a two-letter country code,
   ISO 639-1 language codes.
+- `autodj` (optional, default `false`, #62): the station plays an AutoDJ
+  playlist when no DJ is live. Each of its formats gets a hidden mount
+  `/stations/{id}/autodj.{fmt}`, fed by the playout worker over the internal
+  network (#63), with the live mount's cap. The live mount sets
+  `fallback-mount` to it: when the live source drops, Icecast moves the
+  listeners there without a reconnect, and `fallback-override` `all` moves
+  them back when the DJ reconnects. A listener who connects while no DJ is
+  live hears AutoDJ straight away. Caddy never serves AutoDJ mounts, on
+  either host. For a seamless switch the AutoDJ stream must use the live
+  stream's codec, bitrate and sample rate. Each AutoDJ mount with a source
+  counts toward `<sources>`.
 - Capacity planning (which station goes on which node, refusing a full
   node) stays in the control plane; this repository only applies the
   limits. Icecast's global `<sources>` limit (50) is the hard ceiling.
 
 Locally, Compose mounts `deploy/stations.example.json` (override with
 `STATIONS_JSON`). `tests/station-limits.sh` checks caps, the default cap,
-plan formats and bitrates, and a reload that keeps listeners.
+plan formats and bitrates, a reload that keeps listeners, and the AutoDJ
+fallback mounts.
 
 ## Opus and data-saver bitrates
 

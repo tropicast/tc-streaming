@@ -99,6 +99,8 @@ def load_stations():
                 sys.exit(f"{STATIONS_FILE}: station {station_id} has unknown format {fmt!r}")
         if "directory" in limits:
             check_directory(station_id, limits["directory"])
+        if not isinstance(limits.get("autodj", False), bool):
+            sys.exit(f"{STATIONS_FILE}: station {station_id} autodj must be true or false")
     return {"default": default, "stations": stations}
 
 
@@ -176,6 +178,12 @@ def apply_station_limits(tree, stations):
     Each mount copies the default mount's source authentication, because a
     normal mount does not inherit it. Stations without an entry use the
     default mount and its cap.
+
+    AutoDJ (#62): a station with "autodj": true also gets a hidden
+    autodj.<fmt> mount per format, fed by the playout worker. When the live
+    source drops, Icecast moves its listeners there (fallback-mount); when it
+    comes back, it takes them back (fallback-override "all": only the live
+    mount sends listeners to the AutoDJ mount, so all of them are its own).
     """
     root = tree.getroot()
     default_mount = root.find("./mount[@type='default']")
@@ -199,11 +207,24 @@ def apply_station_limits(tree, stations):
             mount = ET.Element("mount", {"type": "normal"})
             ET.SubElement(mount, "mount-name").text = f"/stations/{station_id}/live.{fmt}"
             ET.SubElement(mount, "max-listeners").text = str(limits["max_listeners"])
+            if limits.get("autodj"):
+                ET.SubElement(mount, "fallback-mount").text = f"/stations/{station_id}/autodj.{fmt}"
+                ET.SubElement(mount, "fallback-override").text = "all"
             if "directory" in limits:
                 directory_settings(mount, limits["directory"])
             mount.append(copy.deepcopy(auth))
             root.insert(position, mount)
             position += 1
+            if limits.get("autodj"):
+                # Same cap as the live mount, so the fallback never drops a
+                # listener. Hidden from the status pages; Caddy never serves it.
+                mount = ET.Element("mount", {"type": "normal"})
+                ET.SubElement(mount, "mount-name").text = f"/stations/{station_id}/autodj.{fmt}"
+                ET.SubElement(mount, "max-listeners").text = str(limits["max_listeners"])
+                ET.SubElement(mount, "hidden").text = "1"
+                mount.append(copy.deepcopy(auth))
+                root.insert(position, mount)
+                position += 1
 
 
 def write_config(tree):
