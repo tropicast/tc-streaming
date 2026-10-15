@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end check of node monitoring (#10): the exporter and Alloy push
 # Icecast and host metrics to a local Prometheus, and Icecast logs (#46) to a
-# local Loki (both standing in for Grafana Cloud). Needs Docker with Compose,
+# local Loki (both standing in for Grafana Cloud), and the AutoDJ metrics
+# (#66) of the exporter and the playout service. Needs Docker with Compose,
 # ffmpeg with libmp3lame, curl, python3.
 set -euo pipefail
 
@@ -14,10 +15,34 @@ project=tcs-monitoring-$run_id
 port=$(free_port)
 prom_port=$(free_port)
 loki_port=$(free_port)
-env_file=$(mktemp)
-trap '[[ -n ${KEEP:-} ]] || docker compose -p "$project" -f compose.yaml -f tests/monitoring.compose.yaml --env-file "$env_file" --profile monitoring down -v >/dev/null 2>&1; [[ -n ${KEEP:-} ]] || rm -f "$env_file"' EXIT
+# Inside the repository: Docker Desktop only shares some host paths.
+work=$(mktemp -d "$PWD/.tmp-monitoring.XXXXXX")
+env_file=$work/env
+stub=$work/stub
+compose() {
+    docker compose -p "$project" -f compose.yaml -f tests/monitoring.compose.yaml -f tests/playout.compose.yaml \
+        --env-file "$env_file" --profile monitoring --profile autodj "$@"
+}
+trap '[[ -n ${KEEP:-} ]] || compose down -v >/dev/null 2>&1; [[ -n ${KEEP:-} ]] || rm -rf "$work"' EXIT
 
 secret=$(openssl rand -hex 16)
+
+# AutoDJ for station 42 (#66): one track, served by the playout stub.
+mkdir -p "$stub/tracks"
+chmod 0755 "$work" "$stub" "$stub/tracks"
+ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=30" -c:a libmp3lame -b:a 64k "$stub/tracks/a.mp3"
+python3 - "$stub" "$secret" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+stub, secret = sys.argv[1:]
+sha = hashlib.sha256(Path(stub, "tracks", "a.mp3").read_bytes()).hexdigest()
+track = {"id": "a", "url": "http://playout-stub:9001/tracks/a.mp3", "sha256": sha}
+output = {"format": "mp3", "bitrate_kbps": 64, "sample_rate": 44100, "channels": 2}
+Path(stub, "state.json").write_text(json.dumps({"stations": {"42": {"password": secret, "outputs": [output], "tracks": [track]}}}))
+PY
+printf '%s\n' '{"stations": {"42": {"max_listeners": 10, "formats": ["mp3"], "autodj": true}}}' >"$work/stations.json"
+chmod 0644 "$stub/tracks/a.mp3" "$stub/state.json" "$work/stations.json"
+
 cat >"$env_file" <<ENV
 ICECAST_SOURCE_PASSWORD=$(openssl rand -hex 24)
 ICECAST_ADMIN_PASSWORD=$(openssl rand -hex 24)
@@ -36,15 +61,17 @@ GRAFANA_CLOUD_LOKI_URL=http://loki:3100/loki/api/v1/push
 GRAFANA_CLOUD_LOKI_USER=test
 GRAFANA_CLOUD_TOKEN=test
 NODE_NAME=test-node
+STATIONS_JSON=$work/stations.json
+PLAYOUT_URL=http://playout-stub:9001/playout
+PLAYOUT_USER=playout
+PLAYOUT_PASSWORD=$(openssl rand -hex 24)
+PLAYOUT_POLL_SECONDS=2
+PLAYOUT_STUB_DIR=$stub
 ENV
 
-compose() {
-    docker compose -p "$project" -f compose.yaml -f tests/monitoring.compose.yaml \
-        --env-file "$env_file" --profile monitoring "$@"
-}
 build=(--build)
 [[ -n ${E2E_PREBUILT:-} ]] && build=()
-compose up -d "${build[@]}" --wait icecast auth-stub icecast-exporter prometheus loki >/dev/null
+compose up -d "${build[@]}" --wait icecast auth-stub icecast-exporter prometheus loki playout-stub playout >/dev/null
 compose up -d alloy >/dev/null
 
 failures=0
@@ -151,6 +178,24 @@ proxy() {  # proxy <method> <path>: HTTP status through docker-socket-proxy, as 
 check "proxy allows container logs" 200 "$(proxy GET "/v1.43/containers/$icecast_id/logs?stdout=1&tail=1")"
 check "proxy refuses reading container files" 403 "$(proxy GET "/v1.43/containers/$icecast_id/archive?path=/etc/passwd")"
 check "proxy refuses exec" 405 "$(proxy POST "/v1.43/containers/$icecast_id/exec")"
+
+# AutoDJ (#66): the exporter's AutoDJ metrics and the playout service's own.
+check "station 42 has AutoDJ for MP3" 1 "$(query_until 'tc_station_autodj_enabled{instance="test-node",station="42",format="mp3"}' 1)"
+check "station 42's AutoDJ mount has a source" 1 "$(query_until 'tc_autodj_mount_up{instance="test-node",station="42",format="mp3"}' 1)"
+check "AutoDJ mounts stay out of the station-keyed series" 1 \
+    "$(query_until 'count(icecast_mount_up{instance="test-node",station="42"})' 1)"
+check "playout is scraped" 1 "$(query_until 'up{job="playout",instance="test-node"}' 1)"
+check "playout runs station 42" 1 "$(query_until 'playout_station_running{instance="test-node",station="42"}' 1)"
+check "playout reads the control plane" 1 "$(query_until 'playout_endpoint_up{instance="test-node"}' 1)"
+check "station 42 has a playable track" 1 "$(query_until 'playout_station_playable{instance="test-node",station="42"}' 1)"
+# The alert expressions, without their "for" (the local Prometheus runs no rules).
+check "StationOffAir does not match while live and AutoDJ are up" none \
+    "$(query_until 'tc_station_autodj_enabled unless on (instance, station, format) (tc_autodj_mount_up or icecast_mount_up{station!=""})' none)"
+compose stop playout >/dev/null
+check "PlayoutDown matches once playout stops" 0 \
+    "$(query_until 'up{job="playout"} == 0 and on (instance) tc_station_autodj_enabled' 0)"
+check "AutoDJSourceMissing matches once playout stops" 1 \
+    "$(query_until 'tc_station_autodj_enabled unless on (instance, station, format) tc_autodj_mount_up unless on (instance, station) playout_station_playable == 0 unless on (instance) icecast_up == 0' 1)"
 
 kill "$listener" "$publisher" 2>/dev/null || true
 check "listener disconnect is an access line" 1 \

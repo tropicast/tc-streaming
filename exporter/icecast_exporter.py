@@ -6,6 +6,10 @@ reads listeners and egress here instead of holding Icecast credentials.
 - Icecast stats from /admin/stats.xml: listeners and bytes per station.
 - The node's month-to-date egress and included quota from the Hetzner
   Cloud API, when HCLOUD_READ_TOKEN is set (use a read-only token).
+- AutoDJ (#66): which stations have AutoDJ (stations.json) and whether their
+  hidden autodj.<fmt> mounts have a source, as tc_* metrics. The AutoDJ
+  mounts' icecast_mount_* series carry only a mount label, so readers keyed
+  by station and format (tc-dashboard) keep seeing the live mounts alone.
 
 Environment:
   ICECAST_URL           default http://icecast:8000
@@ -15,6 +19,7 @@ Environment:
   HCLOUD_SERVER_NAME    server to read traffic for, e.g. tc-stream-1
   TC_STREAMING_VERSION  release deployed on the node (deploy.sh sets it), default 0.0.0
   TC_STREAMING_REVISION git commit deployed on the node, default unknown
+  STATIONS_FILE         station limits (#8), default /etc/icecast/stations.json
 """
 
 import base64
@@ -38,9 +43,15 @@ HCLOUD_API = os.environ.get("HCLOUD_API", "https://api.hetzner.cloud/v1").rstrip
 VERSION = os.environ.get("TC_STREAMING_VERSION") or "0.0.0"
 REVISION = os.environ.get("TC_STREAMING_REVISION") or "unknown"
 HCLOUD_TTL = 300  # seconds; Hetzner updates traffic counters slowly
-STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/live\.(?P<format>mp3|opus)$")
+STATIONS_FILE = os.environ.get("STATIONS_FILE", "/etc/icecast/stations.json")
+# A station's live mount, or its hidden AutoDJ mount (#62).
+STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/(?P<kind>live|autodj)\.(?P<format>mp3|opus)$")
+FORMATS = ("mp3", "opus")  # a station's formats when stations.json names none, as docker-entrypoint.py
+# Per-mount series repeated for AutoDJ mounts as tc_autodj_mount_<name>, keyed by station and format.
+AUTODJ_SERIES = ("up", "listeners", "sent_bytes_total")
 
 _hcloud_cache = {"at": 0.0, "lines": []}
+_stations_cache = {"lines": []}
 
 
 def escape(value):
@@ -99,16 +110,55 @@ def icecast_lines():
         "icecast_mount_bitrate_kbps": ("gauge", "Source bitrate: as declared (ice-bitrate), else measured.",
                                        source_bitrate),
     }
-    sources = root.findall("source")
+    sources = [(source, STATION.match(source.get("mount", ""))) for source in root.findall("source")]
     for metric, (kind, help_text, value) in per_mount.items():
         lines += [f"# HELP {metric} {help_text}", f"# TYPE {metric} {kind}"]
-        for source in sources:
-            mount = source.get("mount", "")
-            match = STATION.match(mount)
-            labels = f'mount="{escape(mount)}"'
-            if match:
+        for source, match in sources:
+            labels = f'mount="{escape(source.get("mount", ""))}"'
+            # AutoDJ mounts keep only their mount label here: readers keyed by
+            # station and format (tc-dashboard) see the live mounts alone.
+            if match and match["kind"] == "live":
                 labels += f',station="{escape(match["station"])}",format="{match["format"]}"'
             lines.append(f"{metric}{{{labels}}} {value(source)}")
+    # The AutoDJ mounts again, keyed by station and format (#66), from the same table.
+    for name in AUTODJ_SERIES:
+        kind, help_text, value = per_mount[f"icecast_mount_{name}"]
+        metric = f"tc_autodj_mount_{name}"
+        lines += [f"# HELP {metric} AutoDJ mount: {help_text}", f"# TYPE {metric} {kind}"]
+        for source, match in sources:
+            if match and match["kind"] == "autodj":
+                lines.append(f'{metric}{{station="{escape(match["station"])}",format="{match["format"]}"}} {value(source)}')
+    return lines
+
+
+def stations_lines():
+    """
+    Stations with AutoDJ in stations.json, one series per format. Nothing when
+    the file is missing. When it does not parse, the last good read:
+    `deploy.sh apply-stations` rewrites it in place (a bind mount needs the
+    same inode), so a scrape can see it half written, and a gap would reset
+    the alerts' `for` timers.
+    """
+    try:
+        with open(STATIONS_FILE) as handle:
+            stations = json.load(handle).get("stations", {})
+    except OSError:
+        return []
+    except (ValueError, AttributeError):
+        return _stations_cache["lines"]
+    if not isinstance(stations, dict):
+        return _stations_cache["lines"]
+    lines = [
+        "# HELP tc_station_autodj_enabled 1 for each station and format with AutoDJ in stations.json.",
+        "# TYPE tc_station_autodj_enabled gauge",
+    ]
+    for station_id, limits in sorted(stations.items()):
+        if isinstance(limits, dict) and limits.get("autodj") is True:
+            formats = limits.get("formats", FORMATS)
+            for fmt in FORMATS:
+                if isinstance(formats, list | tuple) and fmt in formats:
+                    lines.append(f'tc_station_autodj_enabled{{station="{escape(station_id)}",format="{fmt}"}} 1')
+    _stations_cache["lines"] = lines
     return lines
 
 
@@ -175,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = ("\n".join(build_lines() + icecast_lines() + hcloud_lines()) + "\n").encode()
+        body = ("\n".join(build_lines() + icecast_lines() + stations_lines() + hcloud_lines()) + "\n").encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
         self.send_header("Content-Length", str(len(body)))

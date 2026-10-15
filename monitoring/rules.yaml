@@ -33,9 +33,13 @@ groups:
           description: Station metrics are missing; streaming may still work.
 
       # A station whose source was live in the last 10 minutes and is gone
-      # now. Also fires when a station stops on purpose, hence "info".
+      # now. Also fires when a station stops on purpose, hence "info". Not
+      # while AutoDJ plays for that station and format (#66), nor for the
+      # AutoDJ mounts themselves (AutoDJSourceMissing covers those).
       - alert: StationSourceDropped
-        expr: max_over_time(icecast_mount_up[10m]) unless icecast_mount_up
+        expr: |
+          (max_over_time(icecast_mount_up{mount!~"/stations/[^/]+/autodj\\..+"}[10m]) unless icecast_mount_up)
+            unless on (instance, station, format) tc_autodj_mount_up
         labels:
           severity: info
         annotations:
@@ -92,3 +96,76 @@ groups:
           severity: warning
         annotations:
           summary: CPU above 90% for 15 minutes on {{ $labels.instance }}.
+
+      # --- AutoDJ (#66) ---------------------------------------------------
+      # Gated on stations with AutoDJ: without the autodj profile the scrape
+      # target does not exist and up{job="playout"} is always 0.
+      - alert: PlayoutDown
+        expr: up{job="playout"} == 0 and on (instance) tc_station_autodj_enabled
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The AutoDJ playout service on {{ $labels.instance }} is down.
+          description: Stations without a DJ are off air. `deploy.sh compose ps playout` and `logs playout` on the node; see docs/runbook.md, AutoDJ.
+
+      # A station and format with AutoDJ in stations.json whose AutoDJ mount
+      # has no source. Not for a station without a playable track (the
+      # playout service does not start it on purpose; AutoDJNoPlayableTrack),
+      # nor while Icecast itself is down.
+      - alert: AutoDJSourceMissing
+        expr: |
+          tc_station_autodj_enabled
+            unless on (instance, station, format) tc_autodj_mount_up
+            unless on (instance, station) playout_station_playable == 0
+            unless on (instance) icecast_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Station {{ $labels.station }} has AutoDJ but no AutoDJ source ({{ $labels.format }}).
+          description: When its DJ drops, listeners get nothing. Look for the station in `deploy.sh compose logs playout` (no playable track, refused credential, Liquidsoap exits).
+
+      # Neither the DJ nor AutoDJ, per format: listeners of a station that
+      # promises to stay on air hear nothing. A station without a playable
+      # track has nothing to fall back to, by its own choice.
+      - alert: StationOffAir
+        expr: |
+          tc_station_autodj_enabled
+            unless on (instance, station, format) (tc_autodj_mount_up or icecast_mount_up{station!=""})
+            unless on (instance, station) playout_station_playable == 0
+            unless on (instance) icecast_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Station {{ $labels.station }} is off air (no DJ and no AutoDJ, {{ $labels.format }}).
+          description: Same causes as AutoDJSourceMissing; check the playout logs first.
+
+      # AutoDJ on, but no track it can play (none uploaded, or all fail their
+      # download or sha256 check): the station goes silent when its DJ does.
+      - alert: AutoDJNoPlayableTrack
+        expr: playout_station_playable == 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: Station {{ $labels.station }} has AutoDJ on but no playable track.
+          description: Its AutoDJ is not started. Tracks that fail are named in `deploy.sh compose logs playout` (download failed).
+
+      - alert: PlayoutEndpointFailing
+        expr: playout_endpoint_up == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The playout service on {{ $labels.instance }} cannot read the control plane.
+          description: Stations keep their last playlist, but changes and new stations do not arrive. Check PLAYOUT_URL, PLAYOUT_PASSWORD on both sides and the private network.
+
+      - alert: PlayoutStationRestarting
+        expr: increase(playout_station_restarts_total[15m]) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: AutoDJ for station {{ $labels.station }} keeps restarting.
+          description: Liquidsoap exited {{ $value | humanize }} times in 15 minutes; its error is in `deploy.sh compose logs playout`.

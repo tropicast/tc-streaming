@@ -43,6 +43,16 @@ prometheus.scrape "icecast" {
   forward_to      = [prometheus.relabel.instance.receiver]
 }
 
+// AutoDJ playout service (#66), Compose profile "autodj". Without the
+// profile the target does not resolve: up{job="playout"} is 0, and the
+// PlayoutDown alert only fires for nodes with AutoDJ stations.
+prometheus.scrape "playout" {
+  targets         = [{"__address__" = "playout:9101"}]
+  job_name        = "playout"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.relabel.instance.receiver]
+}
+
 // One stable instance label per node, whatever the scrape target was.
 prometheus.relabel "instance" {
   forward_to = [prometheus.remote_write.cloud.receiver]

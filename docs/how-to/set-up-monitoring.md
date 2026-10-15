@@ -311,13 +311,19 @@ tags; plain `docker compose` on the node fails without them.
 | StreamingNodeDown | critical | No metrics at all for 2 minutes | Hetzner Console: is the server running? Then `deploy.sh compose ps` on the node |
 | IcecastDown | critical | Icecast does not answer for 1 minute | *Icecast logs* panel, level `error`; then `deploy.sh compose logs icecast` on the node |
 | IcecastExporterDown | warning | The exporter is down for 2 minutes | Station numbers are missing; streaming may still work |
-| StationSourceDropped | info | A station that was live in the last 10 minutes is off air | Expected if it stopped on purpose |
+| StationSourceDropped | info | A station that was live in the last 10 minutes is off air (not while AutoDJ plays for it) | Expected if it stopped on purpose |
 | EgressQuota70Percent | warning | 70% of the monthly traffic quota is used | Plan a second node or lower bitrates |
 | EgressQuota90Percent | critical | 90% is used | Above 100%, Hetzner bills about $1.12/TB |
 | HetznerTrafficUnknown | warning | The Hetzner API cannot be read for 30 minutes | Check `HCLOUD_READ_TOKEN` |
 | NodeDiskAlmostFull | warning | A disk is over 85% full for 10 minutes | Free space (`docker system prune`) |
 | NodeMemoryLow | warning | Under 10% memory free for 10 minutes | Check which container uses it |
 | NodeCpuBusy | warning | CPU over 90% for 15 minutes | Check listener count; plan capacity |
+| PlayoutDown | critical | The AutoDJ playout service is not scraped for 2 minutes, on a node with AutoDJ stations | `deploy.sh compose ps playout` and `logs playout`; [runbook](../runbook.md#autodj) |
+| AutoDJSourceMissing | warning | A station with AutoDJ and a playable track has no AutoDJ source for one of its formats for 5 minutes | Its line in `deploy.sh compose logs playout`: refused credential, Liquidsoap exits |
+| StationOffAir | critical | A station with AutoDJ and a playable track has neither a DJ nor AutoDJ for one of its formats for 2 minutes | As AutoDJSourceMissing |
+| AutoDJNoPlayableTrack | info | A station with AutoDJ on has no track the playout service can play, for 30 minutes | None uploaded yet, or `download failed` lines in `deploy.sh compose logs playout` |
+| PlayoutEndpointFailing | warning | The playout service cannot read the control plane for 15 minutes | `PLAYOUT_URL`, `PLAYOUT_PASSWORD` on both sides, private network |
+| PlayoutStationRestarting | warning | A station's Liquidsoap exits 3 times in 15 minutes | The error before `liquidsoap exited` in the playout logs |
 
 ## Troubleshooting
 
@@ -340,7 +346,10 @@ tags; plain `docker compose` on the node fails without them.
 
 - **Control plane**: the API can read live listeners and station status
   from Grafana Cloud with a token that has `metrics: Read`, for example the
-  query `sum by (station) (icecast_mount_listeners)`.
+  query `sum by (station) (icecast_mount_listeners)`. Listeners moved to
+  AutoDJ are on `tc_autodj_mount_listeners` (#66):
+  `sum by (station) ({__name__=~"icecast_mount_listeners|tc_autodj_mount_listeners", station!=""})`
+  counts both.
 - **Local test**: `tests/monitoring.sh` runs the exporter and Alloy against
   a local Prometheus and Loki (labels, redaction, dropped healthchecks);
   CI runs it with the e2e tests.

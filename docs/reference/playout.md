@@ -89,6 +89,47 @@ to Icecast on the internal Docker network and to the control plane.
   ago (or two poll intervals). It is written between track downloads too,
   so a long first sync does not fail the deploy's `--wait`.
 
+## Metrics and alerts
+
+Issue #66. Alloy (Compose profile `monitoring`) scrapes two sources:
+
+| Metric | From | Labels | |
+|---|---|---|---|
+| `tc_station_autodj_enabled` | exporter, `stations.json` | `station`, `format` | 1 per format of a station with `"autodj": true` (its `formats`, else MP3 and Opus) |
+| `tc_autodj_mount_up` | exporter, Icecast stats | `station`, `format` | 1 while the AutoDJ mount has a source |
+| `tc_autodj_mount_listeners`, `tc_autodj_mount_sent_bytes_total` | exporter | `station`, `format` | Listeners moved to AutoDJ, and their bytes |
+| `playout_endpoint_up` | playout `:9101` | | 1 if the last read of the control plane worked |
+| `playout_last_sync_timestamp_seconds` | playout | | When it last answered |
+| `playout_station_running` | playout | `station` | 1 while its Liquidsoap runs |
+| `playout_station_restarts_total` | playout | `station` | Liquidsoap exits |
+| `playout_station_playable` | playout | `station` | 1 if it has a playable track, 0 if none (not started) |
+| `playout_track_failures_total` | playout | | Tracks that started failing to download or check (once per failure, not per retry) |
+| `playout_reconcile_failures_total` | playout | | Desired states read but not applied: a local error such as a full disk, logged as `cannot apply the desired state` |
+| `playout_cache_bytes` | playout | | Track cache size, measured once per poll |
+
+- The AutoDJ mounts' own `icecast_mount_*` series keep only a `mount`
+  label. Readers that key mounts by `station` and `format` (the control
+  plane's `ExporterMetrics`, the *Live stations* panel) see the live mounts
+  alone; add the `tc_autodj_mount_*` series to count AutoDJ listeners.
+- The playout metrics port is on the internal Docker network only. Without
+  the `autodj` profile the scrape fails and `up{job="playout"}` is 0; the
+  alerts only look at it on nodes with AutoDJ stations.
+- Alerts (`monitoring/rules.yaml`): **PlayoutDown**, **AutoDJSourceMissing**,
+  **StationOffAir**, **AutoDJNoPlayableTrack**, **PlayoutEndpointFailing**,
+  **PlayoutStationRestarting**
+  ([what they mean](../how-to/set-up-monitoring.md#what-the-alerts-mean)).
+  AutoDJSourceMissing and StationOffAir are per format, and skip stations
+  without a playable track (the playout service does not start those on
+  purpose). **StationSourceDropped** stays quiet while AutoDJ plays for the
+  station, and for the AutoDJ mounts themselves.
+- `playout_endpoint_up` is about the control plane only: a desired state
+  read but not applied (full disk) counts in
+  `playout_reconcile_failures_total`.
+- The exporter keeps the last good read of `stations.json` while
+  `deploy.sh apply-stations` rewrites it in place.
+- Dashboard: *Stations on live vs AutoDJ* (live, AutoDJ only, off air) and
+  *AutoDJ playout* (stations running, restarts, endpoint).
+
 ## Playout endpoint contract
 
 The control plane implements it (tc-dashboard#107).
