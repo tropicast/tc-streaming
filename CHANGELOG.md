@@ -7,7 +7,7 @@ When releasing, rename `Unreleased` to the version (for example `## [0.2.0] - 20
 new empty `Unreleased` section. The release workflow requires that section and publishes it above the
 auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#releasing).
 
-## [Unreleased]
+## [0.1.0] - 2026-10-15
 
 ### Changed
 
