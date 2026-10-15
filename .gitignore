@@ -10,4 +10,5 @@ infra/ansible/inventory.ini
 infra/ansible/group_vars/
 .tmp-limits.*/
 .tmp-playout.*/
+.tmp-autodj.*/
 **/graphify-out

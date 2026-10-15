@@ -11,6 +11,39 @@ object storage (presigned URLs) --tracks--> cache                               
                                                          icecast:8000/stations/{id}/autodj.{fmt} <--+
 ```
 
+## Handoff
+
+Measured by `tests/autodj.sh` through Caddy (#64): one listener connection
+per format, a DJ who drops, comes back and drops again.
+
+| | MP3 128 kbps | Opus 64 kbps |
+|---|---|---|
+| Live to AutoDJ: longest time without new bytes | 0.2 s | 0.5 s |
+| AutoDJ to live: longest time without new bytes | 0.2 s | 2.8 s |
+| Listener reconnects | none | none |
+
+- The stall is measured from the moment the DJ's source stops (or its client
+  starts again), on the wire, so a player with a few seconds of buffer plays
+  on without a gap. Back to live includes the DJ's own connect time (TLS,
+  source auth, and for Ogg the encoder's first pages), which is why Opus is
+  slower there; the move itself is immediate.
+- Ogg Opus: each switch starts a new chained Ogg stream on the same
+  connection (new serial number and headers). ffmpeg decodes it in the
+  test; browser players are not covered by it.
+
+### When live and AutoDJ formats differ
+
+Icecast does not re-encode: on a switch the listener gets the other source's
+frames as they are. With a live MP3 source at 64 kbps / 48 kHz and AutoDJ at
+128 kbps / 44.1 kHz, one connection carried both kinds of frames and ffmpeg
+decoded it with a few errors at the switches. A bitrate change alone is
+harmless for MP3 players (it looks like VBR); a sample-rate change mid-stream
+is not: some players resample wrongly, glitch or stop. So the control plane
+must send AutoDJ `outputs` that match the station's live profile, codec,
+sample rate and channels at least (tc-dashboard#106 pins the profile). Ogg
+Opus is always 48 kHz and each chained stream carries its own headers, so
+only the bitrate and channels can differ there; keep them equal too.
+
 ## Image
 
 `playout/Dockerfile`: `savonet/liquidsoap:v2.4.6`, pinned by digest, plus

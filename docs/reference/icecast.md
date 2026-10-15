@@ -108,7 +108,7 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
 Locally, Compose mounts `deploy/stations.example.json` (override with
 `STATIONS_JSON`). `tests/station-limits.sh` checks caps, the default cap,
 plan formats and bitrates, a reload that keeps listeners, and the AutoDJ
-fallback mounts.
+fallback mounts. `tests/autodj.sh` checks the handoff itself ([AutoDJ playout](playout.md#handoff)).
 
 ## Opus and data-saver bitrates
 
