@@ -180,21 +180,22 @@ check "proxy refuses reading container files" 403 "$(proxy GET "/v1.43/container
 check "proxy refuses exec" 405 "$(proxy POST "/v1.43/containers/$icecast_id/exec")"
 
 # AutoDJ (#66): the exporter's AutoDJ metrics and the playout service's own.
-check "station 42 has AutoDJ" 1 "$(query_until 'tc_station_autodj_enabled{instance="test-node",station="42"}' 1)"
+check "station 42 has AutoDJ for MP3" 1 "$(query_until 'tc_station_autodj_enabled{instance="test-node",station="42",format="mp3"}' 1)"
 check "station 42's AutoDJ mount has a source" 1 "$(query_until 'tc_autodj_mount_up{instance="test-node",station="42",format="mp3"}' 1)"
 check "AutoDJ mounts stay out of the station-keyed series" 1 \
     "$(query_until 'count(icecast_mount_up{instance="test-node",station="42"})' 1)"
 check "playout is scraped" 1 "$(query_until 'up{job="playout",instance="test-node"}' 1)"
 check "playout runs station 42" 1 "$(query_until 'playout_station_running{instance="test-node",station="42"}' 1)"
 check "playout reads the control plane" 1 "$(query_until 'playout_endpoint_up{instance="test-node"}' 1)"
+check "station 42 has a playable track" 1 "$(query_until 'playout_station_playable{instance="test-node",station="42"}' 1)"
 # The alert expressions, without their "for" (the local Prometheus runs no rules).
 check "StationOffAir does not match while live and AutoDJ are up" none \
-    "$(query_until 'tc_station_autodj_enabled unless on (instance, station) (tc_autodj_mount_up or icecast_mount_up{station!=""})' none)"
+    "$(query_until 'tc_station_autodj_enabled unless on (instance, station, format) (tc_autodj_mount_up or icecast_mount_up{station!=""})' none)"
 compose stop playout >/dev/null
 check "PlayoutDown matches once playout stops" 0 \
-    "$(query_until 'up{job="playout"} == 0 and on (instance) (count by (instance) (tc_station_autodj_enabled) > 0)' 0)"
+    "$(query_until 'up{job="playout"} == 0 and on (instance) tc_station_autodj_enabled' 0)"
 check "AutoDJSourceMissing matches once playout stops" 1 \
-    "$(query_until 'tc_station_autodj_enabled unless on (instance, station) tc_autodj_mount_up unless on (instance) icecast_up == 0' 1)"
+    "$(query_until 'tc_station_autodj_enabled unless on (instance, station, format) tc_autodj_mount_up unless on (instance, station) playout_station_playable == 0 unless on (instance) icecast_up == 0' 1)"
 
 kill "$listener" "$publisher" 2>/dev/null || true
 check "listener disconnect is an access line" 1 \

@@ -319,8 +319,9 @@ tags; plain `docker compose` on the node fails without them.
 | NodeMemoryLow | warning | Under 10% memory free for 10 minutes | Check which container uses it |
 | NodeCpuBusy | warning | CPU over 90% for 15 minutes | Check listener count; plan capacity |
 | PlayoutDown | critical | The AutoDJ playout service is not scraped for 2 minutes, on a node with AutoDJ stations | `deploy.sh compose ps playout` and `logs playout`; [runbook](../runbook.md#autodj) |
-| AutoDJSourceMissing | warning | A station with AutoDJ has no AutoDJ source for 5 minutes | Its line in `deploy.sh compose logs playout`: no playable track, refused credential, Liquidsoap exits |
-| StationOffAir | critical | A station with AutoDJ has neither a DJ nor AutoDJ for 2 minutes | As AutoDJSourceMissing |
+| AutoDJSourceMissing | warning | A station with AutoDJ and a playable track has no AutoDJ source for one of its formats for 5 minutes | Its line in `deploy.sh compose logs playout`: refused credential, Liquidsoap exits |
+| StationOffAir | critical | A station with AutoDJ and a playable track has neither a DJ nor AutoDJ for one of its formats for 2 minutes | As AutoDJSourceMissing |
+| AutoDJNoPlayableTrack | info | A station with AutoDJ on has no track the playout service can play, for 30 minutes | None uploaded yet, or `download failed` lines in `deploy.sh compose logs playout` |
 | PlayoutEndpointFailing | warning | The playout service cannot read the control plane for 15 minutes | `PLAYOUT_URL`, `PLAYOUT_PASSWORD` on both sides, private network |
 | PlayoutStationRestarting | warning | A station's Liquidsoap exits 3 times in 15 minutes | The error before `liquidsoap exited` in the playout logs |
 

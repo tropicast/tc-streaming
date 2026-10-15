@@ -70,7 +70,10 @@ def log(message):
 
 
 # Counters for /metrics; written by the main loop only.
-STATS = {"track_failures": 0, "endpoint_up": 0, "last_sync": 0.0}
+STATS = {"track_failures": 0, "reconcile_failures": 0, "endpoint_up": 0, "last_sync": 0.0, "cache_bytes": 0}
+# Tracks failing now, by id and sha256: a track counts once per failure, not
+# once per poll it is retried on.
+FAILING_TRACKS = set()
 
 
 # --- Desired state --------------------------------------------------------
@@ -233,8 +236,10 @@ def download(track):
     """Path of the track in the cache, downloading it if needed; None on failure."""
     # A first sync of a large library takes a while: the loop is still alive.
     heartbeat()
+    key = (track["id"], track["sha256"])
     path = cached(track["sha256"])
     if path:
+        FAILING_TRACKS.discard(key)
         return path
     digest = hashlib.sha256()
     size = 0
@@ -256,12 +261,15 @@ def download(track):
                 raise RuntimeError("not an mp3, ogg, flac, wav or m4a file")
             path = CACHE_DIR / f"{track['sha256']}.{extension}"
             os.replace(tmp.name, path)
+            FAILING_TRACKS.discard(key)
             return path
         except (OSError, RuntimeError, urllib.error.URLError) as error:
             # The presigned URL is a secret: name the track, never the URL.
             reason = error.reason if isinstance(error, urllib.error.URLError) else error
             log(f"track {track['id']}: download failed: {reason}")
-            STATS["track_failures"] += 1
+            if key not in FAILING_TRACKS:
+                FAILING_TRACKS.add(key)
+                STATS["track_failures"] += 1
             Path(tmp.name).unlink(missing_ok=True)
             return None
 
@@ -360,7 +368,9 @@ class Station:
             self.failures, self.next_start = 0, 0.0
 
     def running(self):
-        return self.process is not None and self.process.poll() is None
+        # One read: the metrics thread calls this while the main loop may set it to None.
+        process = self.process
+        return process is not None and process.poll() is None
 
     def supervise(self):
         if self.running():
@@ -404,10 +414,13 @@ class Supervisor:
     def __init__(self):
         self.endpoint = Endpoint()
         self.stations = {}
+        # Desired stations without any playable track, for /metrics.
+        self.unplayable = set()
         self.stopping = False
 
     def reconcile(self, desired):
         keep = set()
+        unplayable = set()
         for station_id, station in sorted(desired.items()):
             paths = [(download(track), track) for track in station["tracks"]]
             paths = [(path, track) for path, track in paths if path]
@@ -415,6 +428,7 @@ class Supervisor:
             if not paths:
                 # Nothing to play: no AutoDJ source, so the live mount has no
                 # fallback and listeners are not held on silence.
+                unplayable.add(station_id)
                 if station_id in self.stations:
                     log(f"station {station_id}: no playable track, stopping")
                     self.remove(station_id)
@@ -427,6 +441,7 @@ class Supervisor:
         for station_id in sorted(set(self.stations) - set(desired)):
             log(f"station {station_id}: removed")
             self.remove(station_id)
+        self.unplayable = unplayable
         evict(keep)
 
     def remove(self, station_id):
@@ -457,18 +472,25 @@ class Supervisor:
                 next_poll = time.monotonic() + POLL_SECONDS
                 try:
                     desired = self.endpoint.fetch()
-                    if failing:
-                        log("playout endpoint reachable again")
-                    failing = False
-                    STATS["endpoint_up"], STATS["last_sync"] = 1, time.time()
-                    if desired is not None:
-                        self.reconcile(desired)
                 except (OSError, RuntimeError) as error:
                     reason = error.reason if isinstance(error, urllib.error.URLError) else error
                     if not failing:
                         log(f"cannot read the desired state, keeping {len(self.stations)} stations: {reason}")
                     failing = True
                     STATS["endpoint_up"] = 0
+                else:
+                    if failing:
+                        log("playout endpoint reachable again")
+                    failing = False
+                    STATS["endpoint_up"], STATS["last_sync"] = 1, time.time()
+                    # A local failure (full cache volume, state dir) is not the control plane's.
+                    try:
+                        if desired is not None:
+                            self.reconcile(desired)
+                    except OSError as error:
+                        STATS["reconcile_failures"] += 1
+                        log(f"cannot apply the desired state, keeping {len(self.stations)} stations: {error}")
+                STATS["cache_bytes"] = cache_size()
             for station in list(self.stations.values()):
                 station.supervise()
                 station.check_stable()
@@ -482,16 +504,22 @@ class Supervisor:
         self.stopping = True
 
 
-def metrics(supervisor):
-    """Prometheus text for the supervisor's state. Station ids only, never a secret."""
-    stations = dict(supervisor.stations)
-    cache = 0
+def cache_size():
+    """Bytes in the track cache; once per poll, not per scrape."""
+    size = 0
     for path in CACHE_DIR.iterdir():
         try:
             if not path.name.startswith("."):
-                cache += path.stat().st_size
+                size += path.stat().st_size
         except OSError:  # evicted while we count
             pass
+    return size
+
+
+def metrics(supervisor):
+    """Prometheus text for the supervisor's state. Station ids only, never a secret."""
+    stations = dict(supervisor.stations)
+    unplayable = set(supervisor.unplayable)
     lines = [
         "# HELP playout_endpoint_up 1 if the last read of the control plane's playout endpoint succeeded.",
         "# TYPE playout_endpoint_up gauge",
@@ -499,12 +527,15 @@ def metrics(supervisor):
         "# HELP playout_last_sync_timestamp_seconds When the playout endpoint last answered.",
         "# TYPE playout_last_sync_timestamp_seconds gauge",
         f"playout_last_sync_timestamp_seconds {STATS['last_sync']:.0f}",
-        "# HELP playout_track_failures_total Tracks that could not be downloaded or checked.",
+        "# HELP playout_track_failures_total Tracks that started failing to download or check (once per failure).",
         "# TYPE playout_track_failures_total counter",
         f"playout_track_failures_total {STATS['track_failures']}",
+        "# HELP playout_reconcile_failures_total Desired states read but not applied (local error, e.g. a full disk).",
+        "# TYPE playout_reconcile_failures_total counter",
+        f"playout_reconcile_failures_total {STATS['reconcile_failures']}",
         "# HELP playout_cache_bytes Size of the track cache.",
         "# TYPE playout_cache_bytes gauge",
-        f"playout_cache_bytes {cache}",
+        f"playout_cache_bytes {STATS['cache_bytes']}",
         "# HELP playout_station_running 1 while the station's Liquidsoap process runs.",
         "# TYPE playout_station_running gauge",
     ]
@@ -514,6 +545,12 @@ def metrics(supervisor):
         "# TYPE playout_station_restarts_total counter",
     ]
     lines += [f'playout_station_restarts_total{{station="{sid}"}} {st.restarts}' for sid, st in sorted(stations.items())]
+    lines += [
+        "# HELP playout_station_playable 1 if the station has a playable track (its AutoDJ source should be up), 0 if none.",
+        "# TYPE playout_station_playable gauge",
+    ]
+    playable = {sid: 1 for sid in stations} | {sid: 0 for sid in unplayable}
+    lines += [f'playout_station_playable{{station="{sid}"}} {value}' for sid, value in sorted(playable.items())]
     return "\n".join(lines) + "\n"
 
 

@@ -313,7 +313,7 @@ has no audio and its live mount answers 404, as without AutoDJ. Docker
 restarts the service (`restart: unless-stopped`).
 
 **Alerts** (Grafana, profile `monitoring`): PlayoutDown, AutoDJSourceMissing,
-StationOffAir, PlayoutEndpointFailing and PlayoutStationRestarting
+StationOffAir, AutoDJNoPlayableTrack, PlayoutEndpointFailing and PlayoutStationRestarting
 ([what they mean](how-to/set-up-monitoring.md#what-the-alerts-mean)). The
 dashboard's *Stations on live vs AutoDJ* panel shows which stations play
 what. After adding the rules, run step 6 of the monitoring how-to again to

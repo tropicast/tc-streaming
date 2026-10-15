@@ -846,7 +846,7 @@
             "uid": "${datasource}"
           },
           "legendFormat": "off air",
-          "expr": "count(tc_station_autodj_enabled{instance=~\"$instance\"} unless on (instance, station) (tc_autodj_mount_up or icecast_mount_up{station!=\"\"})) or vector(0)"
+          "expr": "count(count by (instance, station) (tc_station_autodj_enabled{instance=~\"$instance\"} unless on (instance, station, format) (tc_autodj_mount_up or icecast_mount_up{station!=\"\"}) unless on (instance, station) playout_station_playable == 0)) or vector(0)"
         }
       ],
       "fieldConfig": {

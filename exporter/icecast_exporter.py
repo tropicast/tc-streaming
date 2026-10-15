@@ -44,10 +44,14 @@ VERSION = os.environ.get("TC_STREAMING_VERSION") or "0.0.0"
 REVISION = os.environ.get("TC_STREAMING_REVISION") or "unknown"
 HCLOUD_TTL = 300  # seconds; Hetzner updates traffic counters slowly
 STATIONS_FILE = os.environ.get("STATIONS_FILE", "/etc/icecast/stations.json")
-STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/live\.(?P<format>mp3|opus)$")
-AUTODJ = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/autodj\.(?P<format>mp3|opus)$")
+# A station's live mount, or its hidden AutoDJ mount (#62).
+STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/(?P<kind>live|autodj)\.(?P<format>mp3|opus)$")
+FORMATS = ("mp3", "opus")  # a station's formats when stations.json names none, as docker-entrypoint.py
+# Per-mount series repeated for AutoDJ mounts as tc_autodj_mount_<name>, keyed by station and format.
+AUTODJ_SERIES = ("up", "listeners", "sent_bytes_total")
 
 _hcloud_cache = {"at": 0.0, "lines": []}
+_stations_cache = {"lines": []}
 
 
 def escape(value):
@@ -106,52 +110,55 @@ def icecast_lines():
         "icecast_mount_bitrate_kbps": ("gauge", "Source bitrate: as declared (ice-bitrate), else measured.",
                                        source_bitrate),
     }
-    sources = root.findall("source")
+    sources = [(source, STATION.match(source.get("mount", ""))) for source in root.findall("source")]
     for metric, (kind, help_text, value) in per_mount.items():
         lines += [f"# HELP {metric} {help_text}", f"# TYPE {metric} {kind}"]
-        for source in sources:
-            mount = source.get("mount", "")
-            match = STATION.match(mount)
-            labels = f'mount="{escape(mount)}"'
-            if match:
+        for source, match in sources:
+            labels = f'mount="{escape(source.get("mount", ""))}"'
+            # AutoDJ mounts keep only their mount label here: readers keyed by
+            # station and format (tc-dashboard) see the live mounts alone.
+            if match and match["kind"] == "live":
                 labels += f',station="{escape(match["station"])}",format="{match["format"]}"'
             lines.append(f"{metric}{{{labels}}} {value(source)}")
-    return lines + autodj_mount_lines(sources)
-
-
-def autodj_mount_lines(sources):
-    """The AutoDJ mounts with a source (#62, #63), labelled by station and format."""
-    per_mount = {
-        "tc_autodj_mount_up": ("gauge", "1 while the playout service feeds the station's AutoDJ mount.", lambda s: 1),
-        "tc_autodj_mount_listeners": ("gauge", "Listeners on the AutoDJ mount (moved there from the live mount).",
-                                      lambda s: number(s.findtext("listeners"))),
-        "tc_autodj_mount_sent_bytes_total": ("counter", "Bytes sent from the AutoDJ mount since its source started.",
-                                             lambda s: number(s.findtext("total_bytes_sent"))),
-    }
-    matches = [(source, AUTODJ.match(source.get("mount", ""))) for source in sources]
-    matches = [(source, match) for source, match in matches if match]
-    lines = []
-    for metric, (kind, help_text, value) in per_mount.items():
-        lines += [f"# HELP {metric} {help_text}", f"# TYPE {metric} {kind}"]
-        for source, match in matches:
-            lines.append(f'{metric}{{station="{escape(match["station"])}",format="{match["format"]}"}} {value(source)}')
+    # The AutoDJ mounts again, keyed by station and format (#66), from the same table.
+    for name in AUTODJ_SERIES:
+        kind, help_text, value = per_mount[f"icecast_mount_{name}"]
+        metric = f"tc_autodj_mount_{name}"
+        lines += [f"# HELP {metric} AutoDJ mount: {help_text}", f"# TYPE {metric} {kind}"]
+        for source, match in sources:
+            if match and match["kind"] == "autodj":
+                lines.append(f'{metric}{{station="{escape(match["station"])}",format="{match["format"]}"}} {value(source)}')
     return lines
 
 
 def stations_lines():
-    """Stations with AutoDJ in stations.json; nothing if the file cannot be read."""
+    """
+    Stations with AutoDJ in stations.json, one series per format. Nothing when
+    the file is missing. When it does not parse, the last good read:
+    `deploy.sh apply-stations` rewrites it in place (a bind mount needs the
+    same inode), so a scrape can see it half written, and a gap would reset
+    the alerts' `for` timers.
+    """
     try:
         with open(STATIONS_FILE) as handle:
             stations = json.load(handle).get("stations", {})
-    except (OSError, ValueError, AttributeError):
+    except OSError:
         return []
+    except (ValueError, AttributeError):
+        return _stations_cache["lines"]
+    if not isinstance(stations, dict):
+        return _stations_cache["lines"]
     lines = [
-        "# HELP tc_station_autodj_enabled 1 for each station with AutoDJ in stations.json.",
+        "# HELP tc_station_autodj_enabled 1 for each station and format with AutoDJ in stations.json.",
         "# TYPE tc_station_autodj_enabled gauge",
     ]
     for station_id, limits in sorted(stations.items()):
         if isinstance(limits, dict) and limits.get("autodj") is True:
-            lines.append(f'tc_station_autodj_enabled{{station="{escape(station_id)}"}} 1')
+            formats = limits.get("formats", FORMATS)
+            for fmt in FORMATS:
+                if isinstance(formats, list | tuple) and fmt in formats:
+                    lines.append(f'tc_station_autodj_enabled{{station="{escape(station_id)}",format="{fmt}"}} 1')
+    _stations_cache["lines"] = lines
     return lines
 
 
