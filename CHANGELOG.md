@@ -7,6 +7,13 @@ When releasing, rename `Unreleased` to the version (for example `## [0.2.0] - 20
 new empty `Unreleased` section. The release workflow requires that section and publishes it above the
 auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#releasing).
 
+## [Unreleased]
+
+### Fixed
+
+- The playout service accepts tracks without `sha256` (cached by track id), as tc-dashboard sends them.
+- The deploy signs the playout service in with the source auth node credentials unless `PLAYOUT_USER` / `PLAYOUT_PASSWORD` are set, and the runbook's `PLAYOUT_URL` is tc-dashboard's `/internal/playout/stations`.
+
 ## [0.1.0] - 2026-10-15
 
 ### Changed

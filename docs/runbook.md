@@ -285,13 +285,15 @@ Design and endpoint contract: [AutoDJ playout](reference/playout.md).
 (tc-dashboard#107) on the private network:
 
 ```sh
-gh variable set PLAYOUT_URL --body http://10.20.1.10:8081/internal/playout
-openssl rand -hex 24 | tee ~/.tropicast_playout | gh secret set PLAYOUT_PASSWORD   # same value in tc-dashboard
+gh variable set PLAYOUT_URL --body http://10.20.1.10:8081/internal/playout/stations
 gh variable set COMPOSE_PROFILES --body monitoring,autodj
 gh workflow run deploy.yml --ref main
 ```
 
-`PLAYOUT_USER` is optional (default `playout`), and so are `PLAYOUT_CPUS`
+The playout service signs in with the source auth node credentials
+(`ICECAST_SOURCE_AUTH_USER`, `ICECAST_SOURCE_AUTH_PASSWORD`), which the control
+plane also accepts on its playout endpoint. `PLAYOUT_USER` and
+`PLAYOUT_PASSWORD` override them; both sides must then agree. `PLAYOUT_CPUS`
 and `PLAYOUT_MEMORY` (default `1.5` and `2g`; sizing in
 [load-test.md](load-test.md#autodj-playout)). Set the control plane's
 `STREAMING_MAX_SOURCES` to `66`, Icecast's `<sources>`. The deploy fails early when
