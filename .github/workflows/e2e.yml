@@ -1,7 +1,7 @@
 name: E2E
 
-# Source auth (#7), gateway (#6) and monitoring (#10) end-to-end tests in one job: ffmpeg is
-# installed once and both images are built once, from the same GHA cache as
+# Source auth (#7), gateway (#6), station limits (#8), monitoring (#10) and AutoDJ playout (#63)
+# end-to-end tests in one job: ffmpeg is installed once and the images are built once, from the same GHA cache as
 # image.yml and caddy-image.yml. Image tags, Compose projects and ports are
 # unique per run, so parallel jobs on one runner do not collide.
 on:
@@ -14,6 +14,7 @@ on:
       - caddy/**
       - compose.yaml
       - auth-stub/**
+      - playout/**
       - tests/**
       - exporter/**
       - deploy/alloy/**
@@ -66,6 +67,15 @@ jobs:
           cache-from: type=gha,scope=caddy
           cache-to: type=gha,mode=max,scope=caddy
 
+      - name: Build the playout image
+        uses: docker/build-push-action@v6
+        with:
+          context: playout
+          load: true
+          tags: tropicast-playout:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=playout
+          cache-to: type=gha,mode=max,scope=playout
+
       - name: Install ffmpeg
         run: command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg; }
 
@@ -93,6 +103,14 @@ jobs:
           ICECAST_IMAGE: tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}
           CADDY_IMAGE: tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: AutoDJ playout
+        run: tests/playout.sh
+        env:
+          E2E_PREBUILT: "1"
+          TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          ICECAST_IMAGE: tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          PLAYOUT_IMAGE: tropicast-playout:e2e-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Alert rule unit tests
         run: |
           docker run --rm -v "$PWD/monitoring:/m:ro" -w /m --entrypoint promtool \
@@ -108,4 +126,7 @@ jobs:
 
       - name: Remove the per-run images
         if: always()
-        run: docker rmi -f "tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}" "tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true
+        run: |
+          docker rmi -f "tropicast-icecast:e2e-${{ github.run_id }}-${{ github.run_attempt }}" \
+            "tropicast-caddy:e2e-${{ github.run_id }}-${{ github.run_attempt }}" \
+            "tropicast-playout:e2e-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true

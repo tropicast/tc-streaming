@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag such as v0.1.0 (or v0.1.0-rc.1) on a commit that is on main (#59). The tag is the only place
 # the version is set.
-#   ghcr.io/tropicast/icecast:<version>  and  ghcr.io/tropicast/caddy:<version>
+#   ghcr.io/tropicast/icecast:<version>, ghcr.io/tropicast/caddy:<version> and ghcr.io/tropicast/playout:<version>
 # are the images main already built for that commit (sha-<commit>), tagged again: the same digests, so
 # nothing is rebuilt. :latest moves for non-pre-release tags only. Then a DRAFT GitHub Release is created
 # with the CHANGELOG.md section as notes. Deploying stays manual: run deploy.yml with ref=v<version>; the
@@ -23,6 +23,7 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
       icecast_tag: ${{ steps.images.outputs.icecast_tag }}
       caddy_tag: ${{ steps.images.outputs.caddy_tag }}
+      playout_tag: ${{ steps.images.outputs.playout_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +56,9 @@ jobs:
             caddy/Dockerfile caddy/.dockerignore)
           echo "icecast_tag=sha-$icecast_sha" >> "$GITHUB_OUTPUT"
           echo "caddy_tag=sha-$caddy_sha" >> "$GITHUB_OUTPUT"
+          # AutoDJ playout (#63); empty for commits before it.
+          playout_sha=$(git log -1 --first-parent --format=%H "$GITHUB_SHA" -- playout)
+          echo "playout_tag=${playout_sha:+sha-$playout_sha}" >> "$GITHUB_OUTPUT"
 
       - name: The exporter reports the version
         env:
@@ -85,6 +89,7 @@ jobs:
       LATEST: ${{ needs.verify.outputs.prerelease == 'false' }}
       ICECAST_TAG: ${{ needs.verify.outputs.icecast_tag }}
       CADDY_TAG: ${{ needs.verify.outputs.caddy_tag }}
+      PLAYOUT_TAG: ${{ needs.verify.outputs.playout_tag }}
     steps:
       # Per-job Docker config: keep registry logins and buildx state in this job.
       - name: Isolate the Docker config
@@ -122,6 +127,7 @@ jobs:
           }
           retag icecast "$ICECAST_TAG"
           retag caddy "$CADDY_TAG"
+          if [[ -n $PLAYOUT_TAG ]]; then retag playout "$PLAYOUT_TAG"; fi
 
   publish:
     name: Draft GitHub Release
@@ -142,6 +148,7 @@ jobs:
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
           ICECAST_TAG: ${{ needs.verify.outputs.icecast_tag }}
           CADDY_TAG: ${{ needs.verify.outputs.caddy_tag }}
+          PLAYOUT_TAG: ${{ needs.verify.outputs.playout_tag }}
         run: |
           core="${VERSION%%-*}"
           # The CHANGELOG.md section for this version, then GitHub's list of merged PRs (.github/release.yml).
@@ -149,7 +156,9 @@ jobs:
           {
             cat notes.md
             echo
-            echo "**Images:** \`ghcr.io/tropicast/icecast:$VERSION\` (= \`$ICECAST_TAG\`), \`ghcr.io/tropicast/caddy:$VERSION\` (= \`$CADDY_TAG\`)"
+            echo -n "**Images:** \`ghcr.io/tropicast/icecast:$VERSION\` (= \`$ICECAST_TAG\`), \`ghcr.io/tropicast/caddy:$VERSION\` (= \`$CADDY_TAG\`)"
+            if [[ -n $PLAYOUT_TAG ]]; then echo -n ", \`ghcr.io/tropicast/playout:$VERSION\` (= \`$PLAYOUT_TAG\`)"; fi
+            echo
             echo
             echo "Deploy: run the **Deploy** workflow with \`ref=$GITHUB_REF_NAME\`."
           } > release-notes.md

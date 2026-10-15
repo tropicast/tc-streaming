@@ -20,8 +20,9 @@ The node is created by Terraform
 | `CURRENT`, `PREVIOUS` | `<git-sha> <image-tag>` of the active and prior release |
 
 Services (Compose project `tc-streaming`): `icecast` (no published port),
-`caddy` (ports 80/443, TCP and UDP), and `auth-stub` when the `stub`
-profile is on.
+`caddy` (ports 80/443, TCP and UDP), `auth-stub` when the `stub`
+profile is on, and `playout` (no published port) when the `autodj` profile
+is on.
 
 ## What a deploy restarts
 
@@ -31,11 +32,13 @@ profile is on.
 | Icecast image (Dockerfile, `icecast.xml`, entrypoint) | Icecast restarts. All listeners and broadcasters disconnect; the desktop app reconnects by itself, players usually need a retry. |
 | Icecast secrets or settings in `.env` | Same as an image change. |
 | Caddy image (`caddy/Dockerfile`: Caddy or caddy-l4 version) | Caddy restarts. All connections drop for a few seconds. |
+| Playout image (`playout/`) or `PLAYOUT_*` settings | Playout restarts. Listeners who are on AutoDJ at that moment disconnect; live stations are not affected. |
 
-The deploy uses the Icecast and Caddy images of the last `main` commits
-that changed their files (`ghcr.io/tropicast/icecast`,
-`ghcr.io/tropicast/caddy`). A deploy that does not touch them keeps both
-running. The bundle's `release.env` records both tags.
+The deploy uses the Icecast, Caddy and playout images of the last `main`
+commits that changed their files (`ghcr.io/tropicast/icecast`,
+`ghcr.io/tropicast/caddy`, `ghcr.io/tropicast/playout`). A deploy that does
+not touch them keeps them running. The bundle's `release.env` records the
+tags.
 Deploy Icecast changes in a quiet hour.
 
 ## First-time setup
@@ -141,8 +144,7 @@ commit without a tag reports `git describe`, e.g. `0.1.0-3-gabc1234`.
 
 The workflow:
 
-1. Checks that the commit is on `main` and that its Icecast image exists in
-   GHCR.
+1. Checks that the commit is on `main` and that its images exist in GHCR.
 2. Opens SSH to the runner's own IPv4 only: it attaches a temporary Hetzner
    firewall (`ci-deploy-<run-id>`, label `purpose=ci-deploy`) with
    `HCLOUD_TOKEN`. A final step always removes it, and the next deploy
@@ -150,7 +152,8 @@ The workflow:
 3. Writes `.env` on the node from GitHub secrets and variables (over SSH
    stdin, never on a command line).
 4. Uploads the bundle (`deploy/compose.yaml`, `deploy/deploy.sh`,
-   `caddy/Caddyfile`, `auth-stub/server.py`).
+   `caddy/Caddyfile`, `auth-stub/server.py`) and `release.env` with the
+   image tags.
 5. Logs the node in to GHCR with the job's short-lived token, runs
    `deploy.sh activate`, then logs out.
 6. Checks that `https://<listen>/admin/stats.xml` and
@@ -271,6 +274,56 @@ ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4> /opt/tc-streaming/deploy.sh apply-s
 
 Lowering a cap does not disconnect listeners already connected; it only
 refuses new ones above the cap.
+
+## AutoDJ
+
+The `playout` service plays each AutoDJ station's playlist to its hidden
+AutoDJ mounts; Icecast moves a station's listeners there when its DJ drops.
+Design and endpoint contract: [AutoDJ playout](reference/playout.md).
+
+**Turn it on** once the control plane serves the playout endpoint
+(tc-dashboard#107) on the private network:
+
+```sh
+gh variable set PLAYOUT_URL --body http://10.20.1.10:8081/internal/playout
+openssl rand -hex 24 | tee ~/.tropicast_playout | gh secret set PLAYOUT_PASSWORD   # same value in tc-dashboard
+gh variable set COMPOSE_PROFILES --body monitoring,autodj
+gh workflow run deploy.yml --ref main
+```
+
+`PLAYOUT_USER` is optional (default `playout`). The deploy fails early when
+the `autodj` profile is on and `PLAYOUT_URL` or `PLAYOUT_PASSWORD` is
+missing. A station plays AutoDJ only when it has `"autodj": true` in
+`stations.json` (the mounts) and appears in the playout endpoint (the
+playlist).
+
+**Check:**
+
+```sh
+ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4> /opt/tc-streaming/deploy.sh compose logs --tail 50 playout   # "[playout] station 42: started"
+ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4> /opt/tc-streaming/deploy.sh compose ps playout              # healthy
+```
+
+**When playout is down**, live stations are not affected. Listeners on
+AutoDJ at that moment disconnect; while it is down, a station without a DJ
+has no audio and its live mount answers 404, as without AutoDJ. Docker
+restarts the service (`restart: unless-stopped`).
+
+**Common log lines:**
+
+| Line | Meaning |
+|---|---|
+| `cannot read the desired state, keeping N stations: …` | The endpoint is unreachable or refuses; stations keep their last playlist. Check `PLAYOUT_URL`, the password on both sides and the private network. |
+| `track <id>: download failed: …` | Presigned URL expired or wrong, sha256 mismatch, file too large or not audio. The rest of the playlist plays. |
+| `station <id>: no playable track` | Every track failed: the station has no AutoDJ. |
+| `station <id>: liquidsoap exited with …` | Restarted with backoff; the Liquidsoap lines above it say why. |
+
+A station that connects but is refused by Icecast (wrong AutoDJ credential)
+shows Liquidsoap connection errors and an `auth` denial in the Icecast log.
+
+**Turn it off:** remove `autodj` from `COMPOSE_PROFILES` and deploy. The
+fallback mounts stay until the control plane drops `"autodj": true`; they
+are harmless without a source.
 
 ## Incidents
 

@@ -65,6 +65,31 @@ services:
       STUB_ICECAST_PASSWORD: ${ICECAST_SOURCE_AUTH_PASSWORD:?}
       STUB_STATIONS: ${STUB_STATIONS:-}
 
+  # AutoDJ playout worker (#63), enabled with COMPOSE_PROFILES=autodj.
+  # Plays each AutoDJ station's playlist to its hidden autodj.<fmt> mounts
+  # (#62) over the internal network; no published port. Reads the desired
+  # state from the control plane (tc-dashboard#107) over the private network.
+  # Restarting it drops the listeners who are on AutoDJ at that moment.
+  playout:
+    profiles: ["autodj"]
+    image: ghcr.io/tropicast/playout:${PLAYOUT_IMAGE_TAG:-unset}
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+    environment:
+      PLAYOUT_URL: ${PLAYOUT_URL:-}
+      PLAYOUT_USER: ${PLAYOUT_USER:-}
+      PLAYOUT_PASSWORD: ${PLAYOUT_PASSWORD:-}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run/playout:uid=100,gid=101,mode=0750
+      - /tmp:size=16m
+    volumes:
+      - playout-cache:/var/cache/playout
+
   # Monitoring (#10), enabled with COMPOSE_PROFILES=monitoring.
   # Reads Icecast's admin stats and the Hetzner traffic counters.
   icecast-exporter:
@@ -148,6 +173,7 @@ volumes:
   caddy-data:
   caddy-config:
   alloy-data:
+  playout-cache:
 
 networks:
   default:

@@ -14,8 +14,8 @@
 #   auth-stub/server.py  temporary auth stub (profile "stub")
 #   stations.json        station limits (#8), from the control plane
 #   releases/<sha>/      copy of each deployed bundle, for rollback; its
-#                        release.env holds ICECAST_IMAGE_TAG, CADDY_IMAGE_TAG
-#                        and RELEASE_VERSION
+#                        release.env holds ICECAST_IMAGE_TAG, CADDY_IMAGE_TAG,
+#                        PLAYOUT_IMAGE_TAG (#63) and RELEASE_VERSION
 #   CURRENT, PREVIOUS    "<git-sha> <icecast-image-tag>" of the active and
 #                        prior release
 #
@@ -55,13 +55,16 @@ install_bundle() {
 # only pin the Icecast tag (their compose file uses the stock Caddy image).
 load_release() {
     local sha=$1 fallback_tag=${2:-}
-    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG TC_STREAMING_VERSION
+    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG PLAYOUT_IMAGE_TAG TC_STREAMING_VERSION
     if [[ -f releases/$sha/release.env ]]; then
         ICECAST_IMAGE_TAG=$(sed -n 's/^ICECAST_IMAGE_TAG=//p' "releases/$sha/release.env")
         CADDY_IMAGE_TAG=$(sed -n 's/^CADDY_IMAGE_TAG=//p' "releases/$sha/release.env")
         # The release version (#59), shown by the exporter; releases before it have none.
         TC_STREAMING_VERSION=$(sed -n 's/^RELEASE_VERSION=//p' "releases/$sha/release.env")
+        # AutoDJ playout image (#63); releases before it have none.
+        PLAYOUT_IMAGE_TAG=$(sed -n 's/^PLAYOUT_IMAGE_TAG=//p' "releases/$sha/release.env")
         export CADDY_IMAGE_TAG
+        [[ -z $PLAYOUT_IMAGE_TAG ]] || export PLAYOUT_IMAGE_TAG
     else
         ICECAST_IMAGE_TAG=$fallback_tag
     fi
@@ -74,6 +77,13 @@ start() {
     local image_tag=$ICECAST_IMAGE_TAG
     [[ -f .env ]] || { log "missing $root/.env"; exit 1; }
     compose config --quiet
+    # Services of the active profiles only.
+    local services
+    services=$(compose config --services)
+    if [[ -z ${PLAYOUT_IMAGE_TAG:-} ]] && grep -qx playout <<<"$services"; then
+        log "COMPOSE_PROFILES enables autodj, but this release has no playout image"
+        exit 1
+    fi
 
     if [[ ${SKIP_PULL:-} != 1 ]]; then
         log "pulling images"
@@ -89,6 +99,12 @@ start() {
     if [[ -n $running && -n ${CADDY_IMAGE_TAG:-} ]] &&
         [[ $(docker inspect -f '{{.Config.Image}}' "$running") != *":$CADDY_IMAGE_TAG" ]]; then
         log "caddy image changes to $CADDY_IMAGE_TAG: all connections drop briefly"
+    fi
+
+    running=$(compose ps -q playout 2>/dev/null || true)
+    if [[ -n $running && -n ${PLAYOUT_IMAGE_TAG:-} ]] &&
+        [[ $(docker inspect -f '{{.Config.Image}}' "$running") != *":$PLAYOUT_IMAGE_TAG" ]]; then
+        log "playout image changes to $PLAYOUT_IMAGE_TAG: listeners on AutoDJ will reconnect"
     fi
 
     local caddy_before="" caddy_after=""
@@ -172,7 +188,7 @@ activate)
     install_bundle "releases/$sha"
     start
     record "$sha" "$ICECAST_IMAGE_TAG"
-    log "active: $TC_STREAMING_VERSION $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
+    log "active: $TC_STREAMING_VERSION $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock}, playout ${PLAYOUT_IMAGE_TAG:-none})"
     ;;
 rollback)
     [[ -f PREVIOUS ]] || { log "no previous release recorded"; exit 1; }
@@ -183,7 +199,7 @@ rollback)
     install_bundle "releases/$sha"
     SKIP_PULL=${SKIP_PULL:-1} start
     record "$sha" "$ICECAST_IMAGE_TAG"
-    log "active: $TC_STREAMING_VERSION $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock})"
+    log "active: $TC_STREAMING_VERSION $sha (icecast $ICECAST_IMAGE_TAG, caddy ${CADDY_IMAGE_TAG:-stock}, playout ${PLAYOUT_IMAGE_TAG:-none})"
     ;;
 compose)
     if [[ -f CURRENT ]]; then

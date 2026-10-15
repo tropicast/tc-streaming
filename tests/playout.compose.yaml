@@ -1,0 +1,14 @@
+# Test-only overlay for tests/playout.sh: a playout endpoint and track
+# server standing in for the control plane and object storage.
+services:
+  playout-stub:
+    image: python:3.14-slim
+    command: ["python3", "-u", "/srv/playout_stub.py"]
+    volumes:
+      - ./tests/playout_stub.py:/srv/playout_stub.py:ro
+      - ${PLAYOUT_STUB_DIR:?}:/srv/stub:ro
+    environment:
+      STUB_STATE_FILE: /srv/stub/state.json
+      STUB_TRACKS_DIR: /srv/stub/tracks
+      STUB_PLAYOUT_USER: ${PLAYOUT_USER:?}
+      STUB_PLAYOUT_PASSWORD: ${PLAYOUT_PASSWORD:?}
