@@ -168,13 +168,16 @@ for source in root.iter("source"):
 }
 wait_title() {
     for _ in $(seq 1 20); do
-        [[ $(mount_title "$1") == "Track "* ]] && break
+        [[ $(mount_title "$1") == *"Track "* ]] && break
         sleep 1
     done
     mount_title "$1"
 }
 check "station 42: the Opus mount shows the track title" yes \
-    "$([[ $(wait_title /stations/42/autodj.opus) == "Track "* ]] && echo yes || echo no)"
+    "$([[ $(wait_title /stations/42/autodj.opus) == *"Track "* ]] && echo yes || echo no)"
+# MP3 titles are ICY metadata updates, checked by source auth like the source (#72).
+check "station 42: the MP3 mount shows the track title" yes \
+    "$([[ $(wait_title /stations/42/autodj.mp3) == *"Track "* ]] && echo yes || echo no)"
 
 check "station 99: a wrong AutoDJ credential is refused" no "$(mounted /stations/99/autodj.mp3)"
 check "station 99: the refusal comes from source auth" yes \

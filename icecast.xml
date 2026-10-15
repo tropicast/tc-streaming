@@ -58,6 +58,18 @@
                 <option name="headers" value="ice-bitrate,ice-audio-info,content-type" />
                 <option name="header_prefix" value="header." />
             </role>
+            <!-- ICY metadata updates on a station mount (#72): MP3 sources
+                 send track titles apart from the audio, as
+                 GET /admin/metadata?mount=...&mode=updinfo&song=... with
+                 their own credentials. Only that admin command matches, never
+                 a listener's GET; the endpoint checks the credentials as for
+                 the source (action metadata_auth). -->
+            <role type="url" match-method="get" nomatch-web="*" match-admin="metadata" nomatch-admin="*" allow-admin="metadata">
+                <option name="client_add" value="" />
+                <option name="action_add" value="metadata_auth" />
+                <option name="username" value="" />
+                <option name="password" value="" />
+            </role>
             <role type="anonymous" match-method="source,put" deny-all="*" />
         </authentication>
     </mount>

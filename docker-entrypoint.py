@@ -58,8 +58,9 @@ def required(name):
 
 
 def configure_source_auth(tree):
-    role = tree.find("./mount[@type='default']/authentication/role[@type='url']")
-    if role is None:
+    # Two URL roles call the endpoint: source connects and metadata updates (#72).
+    roles = tree.findall("./mount[@type='default']/authentication/role[@type='url']")
+    if not roles:
         sys.exit("Icecast configuration is missing the source auth role")
     url = required("ICECAST_SOURCE_AUTH_URL")
     if not url.startswith(("http://", "https://")) or "@" in url:
@@ -69,11 +70,12 @@ def configure_source_auth(tree):
         "username": required("ICECAST_SOURCE_AUTH_USER"),
         "password": password("ICECAST_SOURCE_AUTH_PASSWORD"),
     }
-    for name, value in values.items():
-        option = role.find(f"./option[@name='{name}']")
-        if option is None:
-            sys.exit(f"Source auth role is missing option {name}")
-        option.set("value", value)
+    for role in roles:
+        for name, value in values.items():
+            option = role.find(f"./option[@name='{name}']")
+            if option is None:
+                sys.exit(f"Source auth role is missing option {name}")
+            option.set("value", value)
 
 
 def load_stations():

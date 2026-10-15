@@ -5,10 +5,10 @@ runs in the same Compose project and reaches Icecast over the internal
 Docker network. It is built with the
 [layer4 module](https://github.com/mholt/caddy-l4) (`caddy/Dockerfile`).
 
-| Host          | Allows                                                      | Everything else   |
-| ------------- | ----------------------------------------------------------- | ----------------- |
-| `LISTEN_HOST` | `GET`/`HEAD`/`OPTIONS` on `/stations/{id}/live.(mp3\|opus)` | 404               |
-| `INGEST_HOST` | `PUT`/`SOURCE` on `/stations/{id}/live.(mp3\|opus)`         | connection closed |
+| Host          | Allows                                                                                                                           | Everything else   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `LISTEN_HOST` | `GET`/`HEAD`/`OPTIONS` on `/stations/{id}/live.(mp3\|opus)`                                                                      | 404               |
+| `INGEST_HOST` | `PUT`/`SOURCE` on `/stations/{id}/live.(mp3\|opus)`; `GET /admin/metadata?mode=updinfo&mount=/stations/{id}/live.(mp3\|opus)` | connection closed |
 
 The two hosts work differently:
 
@@ -20,10 +20,17 @@ The two hosts work differently:
   decrypts TLS (HTTP/1.1 only), checks the request line and passes the raw
   connection to Icecast. Chunked uploads (curl, FFmpeg's `https://`) work
   too.
+- **Track titles** of MP3 sources are a separate request, an ICY metadata
+  update (`GET /admin/metadata?mode=updinfo&mount=…&song=…`) with the
+  source's credentials. The ingest route passes it for a live mount only;
+  Icecast checks the credentials with the control plane, as for the source
+  ([contract](../source-auth.md#metadata-updates)). No other admin command
+  passes.
 
 - Streams are proxied with `flush_interval -1`, so audio is never
   buffered. Caddy sets no timeout on long-lived streams.
-- Admin and status pages are never reachable from outside.
+- Admin and status pages are never reachable from outside; the only admin
+  request that passes is a source's own metadata update, on `INGEST_HOST`.
 - Listener responses carry `Access-Control-Allow-Origin: *` for the web
   player, and every response carries HSTS.
 - The access log drops query strings, `Authorization` and `Cookie` headers.

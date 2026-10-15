@@ -9,7 +9,8 @@
 	# SOURCE with no Content-Length and stream until they disconnect. An HTTP
 	# proxy forwards no body for such a request, so the layer4 module
 	# decrypts TLS and passes the raw connection to Icecast. Only a
-	# PUT/SOURCE request line for a station mount is passed on; any other
+	# PUT/SOURCE request line for a station mount is passed on, and a
+	# source's ICY metadata update of its live mount (#72); any other
 	# connection to INGEST_HOST is closed. Connections for other hostnames
 	# fall through to the normal HTTPS server below.
 	servers :443 {
@@ -29,6 +30,19 @@
 							path_regexp ^/stations/[A-Za-z0-9-]{1,64}/live\.(mp3|opus)$
 						}
 						route @source {
+							proxy icecast:8000
+						}
+						# A track title, sent by MP3 sources apart from the
+						# audio with their own credentials; Icecast asks the
+						# control plane (action metadata_auth). No other admin
+						# command, and no AutoDJ mount.
+						@metadata http {
+							method GET
+							path /admin/metadata
+							query mode=updinfo
+							expression `{http.request.uri.query.mount}.matches("^/stations/[A-Za-z0-9-]{1,64}/live\\.(mp3|opus)$")`
+						}
+						route @metadata {
 							proxy icecast:8000
 						}
 						route {

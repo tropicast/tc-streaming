@@ -31,4 +31,5 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Fixed
 
+- MP3 track titles reach listeners (#72): Icecast checks a source's ICY metadata update with source auth (`action=metadata_auth`), and the ingest gateway passes it for live mounts. Needs tc-dashboard's endpoint to accept `metadata_auth`; until then titles stay refused as before.
 - Pro-plan listener caps above Icecast's maximum (16384) are lowered instead of being ignored.
