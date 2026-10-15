@@ -11,6 +11,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Added
 
+- AutoDJ playout service (`playout/`, Compose profile `autodj`): Liquidsoap 2.4.6 and a supervisor that polls the control plane's playout endpoint, caches tracks by sha256 and runs one Liquidsoap process per station on its AutoDJ mounts. Playlist changes apply without a restart; adding or removing a station leaves the others playing. Image `ghcr.io/tropicast/playout`, deployed and release-tagged with the others.
 - AutoDJ fallback mounts: `"autodj": true` in `stations.json` adds a hidden `/stations/{id}/autodj.{fmt}` mount per format; the live mount falls back to it when the DJ drops and takes listeners back when the DJ returns. Caddy never serves AutoDJ mounts.
 - Release workflow: a `v*` tag checks the changelog, adds version tags to the Icecast and Caddy images of that commit (same digests, nothing restarts) and drafts a GitHub Release. The version comes from the tag only.
 - Deploy a release by tag (`ref=v0.1.0`); the exporter reports the deployed release as `tc_streaming_build_info`, shown in the dashboard's **Release** panel.

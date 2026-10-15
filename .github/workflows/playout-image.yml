@@ -1,0 +1,121 @@
+name: Playout image
+
+# AutoDJ playout worker (playout/Dockerfile, #63): Liquidsoap plus the supervisor.
+on:
+  pull_request:
+    paths:
+      - playout/**
+      - .github/workflows/playout-image.yml
+  # Keep these paths identical to the playout list in deploy.yml ("Resolve the
+  # release"): a deploy uses the image of the last main commit that touched
+  # them.
+  push:
+    branches: [main]
+    paths:
+      - playout/**
+
+permissions:
+  contents: read
+
+# A newer push to the same PR replaces the running build.
+concurrency:
+  # PRs share one group per PR; each main commit gets its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # On main, every image build must finish so its tag exists for deploys
+  # and rollbacks.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/playout
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Per-job Docker config: keep registry logins and buildx state in this job.
+      - name: Isolate the Docker config
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: type=sha,format=long
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: playout
+          load: true
+          tags: tropicast-playout:ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # Shared with e2e.yml.
+          cache-from: type=gha,scope=playout
+          cache-to: type=gha,mode=max,scope=playout
+
+      # The supervisor starts and refuses to run without its settings; Liquidsoap
+      # has the encoders the generated scripts use.
+      - name: Smoke test
+        run: |
+          image=tropicast-playout:ci-${{ github.run_id }}-${{ github.run_attempt }}
+          out=$(docker run --rm "$image" 2>&1 || true)
+          grep -q 'PLAYOUT_URL must be set' <<<"$out" || { echo "$out"; exit 1; }
+          printf '%s\n' \
+            'output.dummy(fallible=true, single("/dev/null"))' \
+            'output.file(%mp3(bitrate=128, samplerate=44100, stereo=false), "/tmp/a.mp3", mean(sine()))' \
+            'output.file(%ogg(%opus(bitrate=64, samplerate=48000, channels=2)), "/tmp/a.ogg", sine())' |
+            docker run --rm -i --entrypoint sh "$image" -c 'cat > /tmp/t.liq && liquidsoap --check /tmp/t.liq'
+
+      # Reuse the vulnerability DB for a day instead of downloading it each run.
+      # Kept per job ($RUNNER_TEMP) so parallel scans do not share one DB.
+      - id: today
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/trivy
+          key: trivy-db-${{ steps.today.outputs.date }}
+          restore-keys: trivy-db-
+
+      - name: Scan for critical vulnerabilities
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$RUNNER_TEMP/trivy:/root/.cache/trivy" \
+            aquasec/trivy:0.67.2 image \
+            --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            tropicast-playout:ci-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Trivy writes the DB as root; let the cache step read it.
+      - if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/trivy"
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - if: github.event_name != 'pull_request'
+        name: Push
+        uses: docker/build-push-action@v6
+        with:
+          context: playout
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=playout
+
+      - name: Remove the per-run image
+        if: always()
+        run: docker rmi -f "tropicast-playout:ci-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true

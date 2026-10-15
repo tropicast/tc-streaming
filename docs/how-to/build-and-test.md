@@ -13,7 +13,8 @@ checks; runs on `main` always finish.
 | ------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
 | `image.yml`                                       | Icecast image files change (PR, `main`)    | Build, health smoke test, Trivy. On `main`, push `ghcr.io/tropicast/icecast`         |
 | `caddy-image.yml`                                 | `caddy/Dockerfile` changes (PR, `main`)    | Build, layer4 check, Trivy. On `main`, push `ghcr.io/tropicast/caddy`                |
-| `e2e.yml`                                         | Images, Compose, auth stub or tests change | One job: builds both images once, runs `tests/source-auth.sh` and `tests/gateway.sh` |
+| `playout-image.yml`                               | `playout/` changes (PR, `main`)            | Build, supervisor and encoder smoke test, Trivy. On `main`, push `ghcr.io/tropicast/playout` |
+| `e2e.yml`                                         | Images, Compose, auth stub or tests change | One job: builds the images once, runs the `tests/*.sh` end-to-end suites (including `tests/playout.sh`) |
 | `deploy-lint.yml`, `terraform.yml`, `ansible.yml` | Their own files change                     | Lint and validate                                                                    |
 | `release.yml`                                     | A `v*` tag is pushed                       | Checks the tag and changelog, adds version tags to the images, drafts the release    |
 

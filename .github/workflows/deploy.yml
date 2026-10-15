@@ -59,6 +59,8 @@ jobs:
             Dockerfile docker-entrypoint.py icecast.xml .dockerignore)
           caddy_sha=$(git log -1 --first-parent --format=%H "$sha" -- \
             caddy/Dockerfile caddy/.dockerignore)
+          # AutoDJ playout (#63); empty for commits before it.
+          playout_sha=$(git log -1 --first-parent --format=%H "$sha" -- playout)
           # The release version (#59), reported by the exporter: the tag on this commit, else
           # "<last tag>-<commits>-g<sha>" from git describe, else 0.0.0+<sha> before the first tag.
           # The images stay the sha- ones: release.yml only adds version tags to the same images,
@@ -73,6 +75,7 @@ jobs:
             echo "version=$version"
             echo "image_tag=sha-$image_sha"
             echo "caddy_tag=sha-$caddy_sha"
+            echo "playout_tag=${playout_sha:+sha-$playout_sha}"
           } >> "$GITHUB_OUTPUT"
           echo "Deploying $version ($sha) with icecast:sha-$image_sha and caddy:sha-$caddy_sha"
 
@@ -80,11 +83,15 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
+          PLAYOUT_TAG: ${{ steps.release.outputs.playout_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker buildx imagetools inspect "ghcr.io/tropicast/icecast:$IMAGE_TAG" >/dev/null
           docker buildx imagetools inspect "ghcr.io/tropicast/caddy:$CADDY_TAG" >/dev/null
+          if [[ -n $PLAYOUT_TAG ]]; then
+            docker buildx imagetools inspect "ghcr.io/tropicast/playout:$PLAYOUT_TAG" >/dev/null
+          fi
           docker logout ghcr.io
 
       # The node's firewall only allows admin CIDRs on SSH. Open port 22 to
@@ -131,6 +138,7 @@ jobs:
           ICECAST_RELAY_PASSWORD: ${{ secrets.ICECAST_RELAY_PASSWORD }}
           ICECAST_SOURCE_AUTH_PASSWORD: ${{ secrets.ICECAST_SOURCE_AUTH_PASSWORD }}
           STUB_STATIONS: ${{ secrets.STUB_STATIONS }}
+          PLAYOUT_PASSWORD: ${{ secrets.PLAYOUT_PASSWORD }}
           GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
           HCLOUD_READ_TOKEN: ${{ secrets.HCLOUD_READ_TOKEN }}
           GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
@@ -144,6 +152,9 @@ jobs:
           INGEST_HOST: ${{ vars.INGEST_HOST }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           COMPOSE_PROFILES: ${{ vars.COMPOSE_PROFILES }}
+          # AutoDJ (#63): the control plane's playout endpoint on the private network.
+          PLAYOUT_URL: ${{ vars.PLAYOUT_URL }}
+          PLAYOUT_USER: ${{ vars.PLAYOUT_USER || 'playout' }}
           # Private-network address (tc-dashboard infra): the exporter listens there for the control plane.
           PRIVATE_IP: ${{ vars.PRIVATE_IP }}
         run: |
@@ -160,7 +171,13 @@ jobs:
               [[ -n ${!name} ]] || echo "::warning::$name is not set: monitoring cannot push to Grafana Cloud (docs/how-to/set-up-monitoring.md, step 4)"
             done
           fi
+          if [[ ,${COMPOSE_PROFILES//[[:space:]]/}, == *,autodj,* ]]; then
+            for name in PLAYOUT_URL PLAYOUT_PASSWORD; do
+              [[ -n ${!name} ]] || { echo "Missing secret or variable: $name (COMPOSE_PROFILES has autodj)" >&2; exit 1; }
+            done
+          fi
           names=("${required[@]}" ICECAST_SOURCE_AUTH_USER COMPOSE_PROFILES STUB_STATIONS
+                 PLAYOUT_URL PLAYOUT_USER PLAYOUT_PASSWORD
                  GRAFANA_CLOUD_PROM_URL GRAFANA_CLOUD_PROM_USER GRAFANA_CLOUD_LOKI_URL
                  GRAFANA_CLOUD_LOKI_USER GRAFANA_CLOUD_TOKEN
                  HCLOUD_READ_TOKEN NODE_NAME PRIVATE_IP)
@@ -184,12 +201,14 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
+          PLAYOUT_TAG: ${{ steps.release.outputs.playout_tag }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           bundle=$(mktemp -d)
           cp deploy/compose.yaml deploy/deploy.sh caddy/Caddyfile auth-stub/server.py \
             exporter/icecast_exporter.py deploy/alloy/config.alloy "$bundle/"
-          printf 'ICECAST_IMAGE_TAG=%s\nCADDY_IMAGE_TAG=%s\nRELEASE_VERSION=%s\n' "$IMAGE_TAG" "$CADDY_TAG" "$VERSION" > "$bundle/release.env"
+          printf 'ICECAST_IMAGE_TAG=%s\nCADDY_IMAGE_TAG=%s\nPLAYOUT_IMAGE_TAG=%s\nRELEASE_VERSION=%s\n' \
+            "$IMAGE_TAG" "$CADDY_TAG" "$PLAYOUT_TAG" "$VERSION" > "$bundle/release.env"
           tar -C "$bundle" -cz . |
             ssh node "rm -rf $REMOTE_ROOT/incoming && install -d -m 0750 $REMOTE_ROOT/incoming && tar -xz -C $REMOTE_ROOT/incoming"
 
@@ -259,6 +278,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
+          PLAYOUT_TAG: ${{ steps.release.outputs.playout_tag }}
         run: |
           {
             echo "## Deploy"
@@ -266,5 +286,6 @@ jobs:
             echo "- Commit: \`$SHA\`"
             echo "- Icecast image: \`ghcr.io/tropicast/icecast:$IMAGE_TAG\`"
             echo "- Caddy image: \`ghcr.io/tropicast/caddy:$CADDY_TAG\`"
+            echo "- Playout image: \`${PLAYOUT_TAG:+ghcr.io/tropicast/playout:$PLAYOUT_TAG}\`"
             echo "- Node: \`$DEPLOY_HOST\`"
           } >> "$GITHUB_STEP_SUMMARY"

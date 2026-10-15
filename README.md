@@ -39,6 +39,7 @@ publish and sets each station's limits.
 - Source authentication against the control plane: no shared broadcast password.
 - Caddy TLS gateway: HTTP proxy for listeners, layer4 pass-through for sources, Let's Encrypt certificates.
 - RadioBrowser listing metadata (`icy-*` headers) per station.
+- AutoDJ: hidden fallback mounts and a Liquidsoap playout service that plays each station's playlist when no DJ is live.
 - Metrics, alerts, dashboard and logs in Grafana Cloud.
 - Hetzner node with Terraform, hardened with Ansible, deployed by a manual workflow with rollback.
 
@@ -83,6 +84,7 @@ workflows and what they run: [docs/how-to/build-and-test.md](docs/how-to/build-a
 | `Dockerfile`, `docker-entrypoint.py`, `icecast.xml` | Icecast image, config rendering, station mounts     |
 | `caddy/`                                            | Caddy image with the layer4 module, `Caddyfile`     |
 | `auth-stub/`                                        | Local source auth stand-in                          |
+| `playout/`                                          | AutoDJ playout image (Liquidsoap + supervisor)      |
 | `exporter/`, `monitoring/`                          | Icecast exporter, alert rules and Grafana dashboard |
 | `infra/terraform`, `infra/ansible`                  | Hetzner node, hardening                             |
 | `deploy/`                                           | Production Compose file, `deploy.sh`, Alloy config  |
@@ -95,6 +97,7 @@ workflows and what they run: [docs/how-to/build-and-test.md](docs/how-to/build-a
 | [Icecast](docs/reference/icecast.md)                              | Image, production config, station limits, Opus mounts, source auth   |
 | [TLS gateway](docs/reference/gateway.md)                          | Caddy routing for listen and ingest, headers, certificates           |
 | [Source auth contract](docs/source-auth.md)                       | The endpoint the control plane implements                            |
+| [AutoDJ playout](docs/reference/playout.md)                       | Playout service, playout endpoint contract, settings                 |
 | [Infrastructure and operations](docs/reference/infrastructure.md) | Terraform node, Ansible hardening, deploy, monitoring                |
 | [Runbook](docs/runbook.md)                                        | First-time setup, deploys, rollbacks, restarts, incidents            |
 | [Provision with CI](docs/how-to/provision-hetzner-with-ci.md)     | Terraform from GitHub Actions                                        |
