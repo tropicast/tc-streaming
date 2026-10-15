@@ -10,10 +10,10 @@ on:
       - .github/workflows/image.yml
   # Build on main only when the image changes. Keep these paths identical to
   # the Icecast list in deploy.yml ("Resolve the release"): a deploy uses the
-  # image of the last main commit that touched them. Tags build regardless.
+  # image of the last main commit that touched them. Release tags (v*) add
+  # version tags to that image in release.yml; they build nothing.
   push:
     branches: [main]
-    tags: ["v*"]
     paths:
       - Dockerfile
       - docker-entrypoint.py
@@ -56,10 +56,7 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           flavor: latest=false
-          tags: |
-            type=sha,format=long
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+          tags: type=sha,format=long
 
       - name: Build
         uses: docker/build-push-action@v6

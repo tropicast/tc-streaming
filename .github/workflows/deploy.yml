@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Commit on main to deploy (SHA, or "main"). Use an older SHA to roll back.
+        description: Commit on main to deploy (SHA, "main", or a release tag such as v0.1.0). Use an older SHA or tag to roll back.
         type: string
         default: main
 
@@ -59,12 +59,22 @@ jobs:
             Dockerfile docker-entrypoint.py icecast.xml .dockerignore)
           caddy_sha=$(git log -1 --first-parent --format=%H "$sha" -- \
             caddy/Dockerfile caddy/.dockerignore)
+          # The release version (#59), reported by the exporter: the tag on this commit, else
+          # "<last tag>-<commits>-g<sha>" from git describe, else 0.0.0+<sha> before the first tag.
+          # The images stay the sha- ones: release.yml only adds version tags to the same images,
+          # and a changed image reference alone would make Compose restart Icecast.
+          if described=$(git describe --tags --match 'v[0-9]*' "$sha" 2>/dev/null); then
+            version=${described#v}
+          else
+            version="0.0.0+$(git rev-parse --short=12 "$sha")"
+          fi
           {
             echo "sha=$sha"
+            echo "version=$version"
             echo "image_tag=sha-$image_sha"
             echo "caddy_tag=sha-$caddy_sha"
           } >> "$GITHUB_OUTPUT"
-          echo "Deploying $sha with icecast:sha-$image_sha and caddy:sha-$caddy_sha"
+          echo "Deploying $version ($sha) with icecast:sha-$image_sha and caddy:sha-$caddy_sha"
 
       - name: Check the images exist
         env:
@@ -174,11 +184,12 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           bundle=$(mktemp -d)
           cp deploy/compose.yaml deploy/deploy.sh caddy/Caddyfile auth-stub/server.py \
             exporter/icecast_exporter.py deploy/alloy/config.alloy "$bundle/"
-          printf 'ICECAST_IMAGE_TAG=%s\nCADDY_IMAGE_TAG=%s\n' "$IMAGE_TAG" "$CADDY_TAG" > "$bundle/release.env"
+          printf 'ICECAST_IMAGE_TAG=%s\nCADDY_IMAGE_TAG=%s\nRELEASE_VERSION=%s\n' "$IMAGE_TAG" "$CADDY_TAG" "$VERSION" > "$bundle/release.env"
           tar -C "$bundle" -cz . |
             ssh node "rm -rf $REMOTE_ROOT/incoming && install -d -m 0750 $REMOTE_ROOT/incoming && tar -xz -C $REMOTE_ROOT/incoming"
 
@@ -245,11 +256,13 @@ jobs:
         if: always()
         env:
           SHA: ${{ steps.release.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
           IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           CADDY_TAG: ${{ steps.release.outputs.caddy_tag }}
         run: |
           {
             echo "## Deploy"
+            echo "- Version: \`$VERSION\`"
             echo "- Commit: \`$SHA\`"
             echo "- Icecast image: \`ghcr.io/tropicast/icecast:$IMAGE_TAG\`"
             echo "- Caddy image: \`ghcr.io/tropicast/caddy:$CADDY_TAG\`"

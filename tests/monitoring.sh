@@ -105,6 +105,8 @@ curl -s -o /dev/null -m 140 "http://127.0.0.1:$port/stations/42/live.mp3" &
 listener=$!
 
 check "icecast_up is 1" 1 "$(query_until 'icecast_up{instance="test-node"}' 1)"
+# Local builds report the 0.0.0 placeholder; deploys set the release (#59).
+check "the exporter reports the release" 1 "$(query_until 'tc_streaming_build_info{instance="test-node",version="0.0.0"}' 1)"
 check "station 42 is live" 1 "$(query_until 'icecast_mount_up{station="42"}' 1)"
 check "station 42 has 1 listener" 1 "$(query_until 'icecast_mount_listeners{station="42"}' 1)"
 check "station 42 reports its bitrate (about 64 kbps)" 1 \

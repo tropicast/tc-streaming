@@ -130,8 +130,14 @@ for testing only: remove the `stub` profile and point
 
 ```sh
 gh workflow run deploy.yml --ref main            # deploys the head of main
+gh workflow run deploy.yml --ref main -f ref=v0.1.0   # deploys a release
 gh run watch
 ```
+
+A release tag deploys the same images as its commit (the `sha-` tags). The
+deploy records the version in `release.env`; the exporter reports it as
+`tc_streaming_build_info{version=…}`, and `deploy.sh status` shows it. A
+commit without a tag reports `git describe`, e.g. `0.1.0-3-gabc1234`.
 
 The workflow:
 
@@ -160,10 +166,10 @@ environment approvals, so whoever starts the workflow is the approver.
 
 ## Roll back
 
-From GitHub, deploy an older commit of `main`:
+From GitHub, deploy an older commit of `main` or an older release tag:
 
 ```sh
-gh workflow run deploy.yml --ref main -f ref=<older-sha>
+gh workflow run deploy.yml --ref main -f ref=<older-sha-or-tag>
 ```
 
 `deploy.sh status` on the node, or the summary of an earlier deploy run,
@@ -179,6 +185,36 @@ ssh -i ~/.ssh/tropicast_deploy deploy@<ipv4>
 
 The next deploy from GitHub rewrites `.env`. To roll back a secret, change
 it in GitHub first.
+
+## Releasing
+
+The git tag is the only place the version is set; nothing in the repository
+holds it. Local and CI runs report `0.0.0`.
+
+1. In a PR, rename `## [Unreleased]` in `CHANGELOG.md` to
+   `## [x.y.z] - YYYY-MM-DD` and add a new empty `Unreleased` section. Merge it.
+2. Tag the merge commit on main:
+
+   ```sh
+   git switch main && git pull
+   git tag v0.1.0-rc.1 && git push origin v0.1.0-rc.1   # or v0.1.0
+   ```
+
+3. The *Release* workflow:
+   - checks the tag format (`v1.2.3` or `v1.2.3-rc.1`), that the commit is on
+     main, and that `CHANGELOG.md` has a section for the version (pre-release
+     tags use their base version);
+   - checks the exporter reports the version;
+   - adds `:<version>` (plus `:latest` for non-pre-release tags) to the
+     `icecast` and `caddy` images of that commit with `crane tag`, waiting for
+     them if main is still building them. The digests stay the same, so a
+     release deploy restarts nothing but the exporter;
+   - creates a **draft** GitHub Release: the changelog section, the images,
+     then the merged PRs grouped by label (`.github/release.yml`; label a PR
+     `skip-changelog` to omit it).
+4. Review the draft and publish it.
+5. Deploy with `ref=v<version>` (above). In Grafana, the dashboard's
+   **Release** panel shows the version.
 
 ## Everyday checks
 

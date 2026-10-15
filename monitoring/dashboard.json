@@ -88,7 +88,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
       "targets": [
@@ -139,9 +139,9 @@
         "uid": "${datasource}"
       },
       "gridPos": {
-        "x": 6,
+        "x": 4,
         "y": 0,
-        "w": 6,
+        "w": 5,
         "h": 4
       },
       "targets": [
@@ -188,9 +188,9 @@
         "uid": "${datasource}"
       },
       "gridPos": {
-        "x": 12,
+        "x": 9,
         "y": 0,
-        "w": 6,
+        "w": 5,
         "h": 4
       },
       "targets": [
@@ -237,7 +237,7 @@
         "uid": "${datasource}"
       },
       "gridPos": {
-        "x": 18,
+        "x": 14,
         "y": 0,
         "w": 6,
         "h": 4
@@ -283,6 +283,54 @@
         },
         "colorMode": "value",
         "graphMode": "area"
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Release",
+      "description": "Release deployed on the node (tc_streaming_build_info, #59).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (version) (tc_streaming_build_info{instance=~\"$instance\"})",
+          "legendFormat": "{{version}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "name",
+        "colorMode": "none",
+        "graphMode": "none"
       }
     },
     {
