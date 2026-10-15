@@ -7,7 +7,8 @@
       "plan": "free",
       "max_listeners": 100,
       "max_bitrate_kbps": 64,
-      "formats": ["mp3", "opus"]
+      "formats": ["mp3", "opus"],
+      "autodj": false
     }
   }
 }

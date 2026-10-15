@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end check of per-station limits (#8): listener caps, the default
-# cap, plan formats and bitrates, a reload that keeps listeners, and caps
-# Icecast cannot take (#55).
+# cap, plan formats and bitrates, a reload that keeps listeners, caps
+# Icecast cannot take (#55), and AutoDJ fallback mounts (#62).
 # Needs Docker with Compose, ffmpeg with libmp3lame, curl and python3.
 set -euo pipefail
 
@@ -28,8 +28,10 @@ trap cleanup EXIT
 secret42=$(openssl rand -hex 16)
 secret77=$(openssl rand -hex 16)
 secret99=$(openssl rand -hex 16)
+secret55=$(openssl rand -hex 16)
 write_limits() {
-    # $1: station 42's listener cap. Overwrites in place for the bind mount.
+    # $1: station 42's listener cap; $2: station 55's AutoDJ flag (default
+    # true). Overwrites in place for the bind mount.
     cat >"$stations" <<JSON
 {"default": {"max_listeners": 3},
  "stations": {"42": {"plan": "free", "max_listeners": $1, "max_bitrate_kbps": 64, "formats": ["mp3"],
@@ -38,7 +40,7 @@ write_limits() {
                                    "logo": "https://radio42.example/logo.png",
                                    "main_stream_url": "https://listen.example/stations/42/live.mp3"}},
               "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}},
-              "55": {"plan": "pro", "max_listeners": 25000, "formats": ["mp3", "opus"]}}}
+              "55": {"plan": "pro", "max_listeners": 25000, "formats": ["mp3", "opus"], "autodj": ${2:-true}}}}
 JSON
 }
 write_limits 2
@@ -48,7 +50,7 @@ ICECAST_ADMIN_PASSWORD=$(openssl rand -hex 24)
 ICECAST_SOURCE_AUTH_USER=icecast
 ICECAST_SOURCE_AUTH_PASSWORD=$(openssl rand -hex 24)
 ICECAST_PORT=$port
-STUB_STATIONS=42:$secret42,77:$secret77,99:$secret99
+STUB_STATIONS=42:$secret42,77:$secret77,99:$secret99,55:$secret55
 STATIONS_JSON=$stations
 LISTEN_HOST=listen.localhost
 INGEST_HOST=ingest.localhost
@@ -146,6 +148,36 @@ print(" ".join(m.findtext("max-listeners") for m in r.findall("mount") if m.find
 }
 check "Pro cap of 25000 is lowered to 16384 (mp3)" 16384 "$(config_cap /stations/55/live.mp3)"
 check "Pro cap of 25000 is lowered to 16384 (opus)" 16384 "$(config_cap /stations/55/live.opus)"
+
+# AutoDJ (#62): station 55 has a hidden autodj.<fmt> mount per format, and
+# its live mounts fall back to them.
+mount_setting() {
+    compose exec -T icecast python3 -c 'import sys, xml.etree.ElementTree as ET
+r = ET.parse("/run/icecast/icecast.xml").getroot()
+print(" ".join(m.findtext(sys.argv[2]) or "-" for m in r.findall("mount") if m.findtext("mount-name") == sys.argv[1]))' "$1" "$2"
+}
+check "AutoDJ: live mp3 falls back to autodj.mp3" /stations/55/autodj.mp3 "$(mount_setting /stations/55/live.mp3 fallback-mount)"
+check "AutoDJ: live opus falls back to autodj.opus" /stations/55/autodj.opus "$(mount_setting /stations/55/live.opus fallback-mount)"
+check "AutoDJ: listeners return to live" all "$(mount_setting /stations/55/live.mp3 fallback-override)"
+check "AutoDJ: autodj mount is hidden" 1 "$(mount_setting /stations/55/autodj.mp3 hidden)"
+check "AutoDJ: autodj mount has the live cap" 16384 "$(mount_setting /stations/55/autodj.opus max-listeners)"
+check "AutoDJ: no fallback for stations without it" - "$(mount_setting /stations/42/live.mp3 fallback-mount)"
+check "Icecast takes the fallback settings without warnings" 0 \
+    "$(compose logs icecast | grep -c 'Old style fallback override' || true)"
+
+publish "55:$secret55" /stations/55/autodj.mp3 100 >/dev/null &
+pids+=($!)
+sleep 3
+listen g /stations/55/live.mp3
+sleep 3
+check "AutoDJ: a listener on the idle live mount hears AutoDJ" yes "$([[ $(size g) -gt 0 ]] && echo yes || echo no)"
+check "AutoDJ: autodj mount is not on the public status page" 0 \
+    "$(curl -s -m 3 "http://127.0.0.1:$port/status-json.xsl" | grep -c 'autodj' || true)"
+
+write_limits 4 false
+compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.py reload-stations >/dev/null
+check "AutoDJ off: reload removes the fallback" - "$(mount_setting /stations/55/live.mp3 fallback-mount)"
+check "AutoDJ off: reload removes the autodj mounts" "" "$(mount_setting /stations/55/autodj.mp3 hidden)"
 check "Icecast accepts every generated cap" 0 "$(compose logs icecast | grep -c 'out of range' || true)"
 write_limits 0
 reload_error=$(compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.py reload-stations 2>&1 >/dev/null || true)
