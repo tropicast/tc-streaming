@@ -159,11 +159,19 @@ live_title() {
 request = urllib.request.Request("http://icecast:8000/admin/stats", headers={"Authorization": "Basic " + base64.b64encode(("admin:" + sys.argv[1]).encode()).decode()})
 for source in ET.fromstring(urllib.request.urlopen(request).read()).iter("source"):
     if source.get("mount") == "/stations/42/live.mp3":
-        print(source.findtext("title") or "")' "$admin_password" 2>/dev/null || true
+        print(source.findtext("title") or "")' "$admin_password" || true
+}
+# Icecast applies an update shortly after answering it: wait up to 10 s for $1.
+wait_live_title() {
+    for _ in $(seq 1 20); do
+        [[ $(live_title) == "$1" ]] && break
+        sleep 0.5
+    done
+    live_title
 }
 check "a wrong credential cannot set the title" 401 "$(metadata 42:wrong live.mp3)"
 check "the source sets its live title through the gateway" 200 "$(metadata "42:$secret" live.mp3)"
-check "Icecast shows the title" "Gateway Song" "$(live_title)"
+check "Icecast shows the title" "Gateway Song" "$(wait_live_title "Gateway Song")"
 check "ingest host closes metadata updates of AutoDJ mounts" 000 "$(metadata "42:$secret" autodj.mp3)"
 check "ingest host closes other admin commands" 000 \
     "$(status -u "42:$secret" "$ingest/admin/stats?mount=%2Fstations%2F42%2Flive.mp3")"
