@@ -6,6 +6,10 @@ reads listeners and egress here instead of holding Icecast credentials.
 - Icecast stats from /admin/stats.xml: listeners and bytes per station.
 - The node's month-to-date egress and included quota from the Hetzner
   Cloud API, when HCLOUD_READ_TOKEN is set (use a read-only token).
+- AutoDJ (#66): which stations have AutoDJ (stations.json) and whether their
+  hidden autodj.<fmt> mounts have a source, as tc_* metrics. The AutoDJ
+  mounts' icecast_mount_* series carry only a mount label, so readers keyed
+  by station and format (tc-dashboard) keep seeing the live mounts alone.
 
 Environment:
   ICECAST_URL           default http://icecast:8000
@@ -15,6 +19,7 @@ Environment:
   HCLOUD_SERVER_NAME    server to read traffic for, e.g. tc-stream-1
   TC_STREAMING_VERSION  release deployed on the node (deploy.sh sets it), default 0.0.0
   TC_STREAMING_REVISION git commit deployed on the node, default unknown
+  STATIONS_FILE         station limits (#8), default /etc/icecast/stations.json
 """
 
 import base64
@@ -38,7 +43,9 @@ HCLOUD_API = os.environ.get("HCLOUD_API", "https://api.hetzner.cloud/v1").rstrip
 VERSION = os.environ.get("TC_STREAMING_VERSION") or "0.0.0"
 REVISION = os.environ.get("TC_STREAMING_REVISION") or "unknown"
 HCLOUD_TTL = 300  # seconds; Hetzner updates traffic counters slowly
+STATIONS_FILE = os.environ.get("STATIONS_FILE", "/etc/icecast/stations.json")
 STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/live\.(?P<format>mp3|opus)$")
+AUTODJ = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/autodj\.(?P<format>mp3|opus)$")
 
 _hcloud_cache = {"at": 0.0, "lines": []}
 
@@ -109,6 +116,42 @@ def icecast_lines():
             if match:
                 labels += f',station="{escape(match["station"])}",format="{match["format"]}"'
             lines.append(f"{metric}{{{labels}}} {value(source)}")
+    return lines + autodj_mount_lines(sources)
+
+
+def autodj_mount_lines(sources):
+    """The AutoDJ mounts with a source (#62, #63), labelled by station and format."""
+    per_mount = {
+        "tc_autodj_mount_up": ("gauge", "1 while the playout service feeds the station's AutoDJ mount.", lambda s: 1),
+        "tc_autodj_mount_listeners": ("gauge", "Listeners on the AutoDJ mount (moved there from the live mount).",
+                                      lambda s: number(s.findtext("listeners"))),
+        "tc_autodj_mount_sent_bytes_total": ("counter", "Bytes sent from the AutoDJ mount since its source started.",
+                                             lambda s: number(s.findtext("total_bytes_sent"))),
+    }
+    matches = [(source, AUTODJ.match(source.get("mount", ""))) for source in sources]
+    matches = [(source, match) for source, match in matches if match]
+    lines = []
+    for metric, (kind, help_text, value) in per_mount.items():
+        lines += [f"# HELP {metric} {help_text}", f"# TYPE {metric} {kind}"]
+        for source, match in matches:
+            lines.append(f'{metric}{{station="{escape(match["station"])}",format="{match["format"]}"}} {value(source)}')
+    return lines
+
+
+def stations_lines():
+    """Stations with AutoDJ in stations.json; nothing if the file cannot be read."""
+    try:
+        with open(STATIONS_FILE) as handle:
+            stations = json.load(handle).get("stations", {})
+    except (OSError, ValueError, AttributeError):
+        return []
+    lines = [
+        "# HELP tc_station_autodj_enabled 1 for each station with AutoDJ in stations.json.",
+        "# TYPE tc_station_autodj_enabled gauge",
+    ]
+    for station_id, limits in sorted(stations.items()):
+        if isinstance(limits, dict) and limits.get("autodj") is True:
+            lines.append(f'tc_station_autodj_enabled{{station="{escape(station_id)}"}} 1')
     return lines
 
 
@@ -175,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = ("\n".join(build_lines() + icecast_lines() + hcloud_lines()) + "\n").encode()
+        body = ("\n".join(build_lines() + icecast_lines() + stations_lines() + hcloud_lines()) + "\n").encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
         self.send_header("Content-Length", str(len(body)))

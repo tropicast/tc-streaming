@@ -14,6 +14,8 @@ station's playlist to its hidden /stations/<id>/autodj.<fmt> mounts (#62).
 - Secrets (node credentials, station passwords, presigned URLs) are never
   logged or written to disk: the station password reaches Liquidsoap
   through its environment.
+- Serves Prometheus metrics on :9101/metrics for Alloy (#66), on the
+  internal Docker network only (no published port).
 
     playout-supervisor.py              run
     playout-supervisor.py healthcheck  exit 0 when the last loop is recent
@@ -21,6 +23,7 @@ station's playlist to its hidden /stations/<id>/autodj.<fmt> mounts (#62).
 
 import base64
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -30,6 +33,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -45,6 +49,7 @@ MAX_TRACK_BYTES = int(os.environ.get("PLAYOUT_MAX_TRACK_MB", "200")) * 1024 * 10
 CACHE_DIR = Path(os.environ.get("PLAYOUT_CACHE_DIR", "/var/cache/playout"))
 STATE_DIR = Path(os.environ.get("PLAYOUT_STATE_DIR", "/run/playout"))
 HEALTH_FILE = STATE_DIR / "healthy"
+METRICS_PORT = int(os.environ.get("PLAYOUT_METRICS_PORT", "9101"))
 TICK_SECONDS = 2
 # A Liquidsoap process that keeps exiting is restarted at most this often.
 RESTART_BACKOFF = (5, 10, 30, 60)
@@ -62,6 +67,10 @@ METADATA_LIMIT = 256
 
 def log(message):
     print(f"[playout] {message}", flush=True)
+
+
+# Counters for /metrics; written by the main loop only.
+STATS = {"track_failures": 0, "endpoint_up": 0, "last_sync": 0.0}
 
 
 # --- Desired state --------------------------------------------------------
@@ -252,6 +261,7 @@ def download(track):
             # The presigned URL is a secret: name the track, never the URL.
             reason = error.reason if isinstance(error, urllib.error.URLError) else error
             log(f"track {track['id']}: download failed: {reason}")
+            STATS["track_failures"] += 1
             Path(tmp.name).unlink(missing_ok=True)
             return None
 
@@ -333,6 +343,7 @@ class Station:
         self.process = None
         self.config = None  # what a restart is needed for: outputs, shuffle, password
         self.failures = 0
+        self.restarts = 0
         self.next_start = 0.0
 
     def apply(self, station, playlist_content):
@@ -359,6 +370,7 @@ class Station:
             self.process = None
             delay = RESTART_BACKOFF[min(self.failures, len(RESTART_BACKOFF) - 1)]
             self.failures += 1
+            self.restarts += 1
             self.next_start = time.monotonic() + delay
             log(f"station {self.id}: liquidsoap exited with {code}, restarting in {delay} s")
             return
@@ -437,6 +449,7 @@ class Supervisor:
             path.unlink(missing_ok=True)
         for path in (STATE_DIR / "stations").iterdir():
             shutil.rmtree(path, ignore_errors=True)
+        serve_metrics(self)
         log(f"polling the control plane every {POLL_SECONDS:g} s")
         next_poll, failing = 0.0, False
         while not self.stopping:
@@ -447,6 +460,7 @@ class Supervisor:
                     if failing:
                         log("playout endpoint reachable again")
                     failing = False
+                    STATS["endpoint_up"], STATS["last_sync"] = 1, time.time()
                     if desired is not None:
                         self.reconcile(desired)
                 except (OSError, RuntimeError) as error:
@@ -454,6 +468,7 @@ class Supervisor:
                     if not failing:
                         log(f"cannot read the desired state, keeping {len(self.stations)} stations: {reason}")
                     failing = True
+                    STATS["endpoint_up"] = 0
             for station in list(self.stations.values()):
                 station.supervise()
                 station.check_stable()
@@ -465,6 +480,62 @@ class Supervisor:
 
     def shutdown(self, *_):
         self.stopping = True
+
+
+def metrics(supervisor):
+    """Prometheus text for the supervisor's state. Station ids only, never a secret."""
+    stations = dict(supervisor.stations)
+    cache = 0
+    for path in CACHE_DIR.iterdir():
+        try:
+            if not path.name.startswith("."):
+                cache += path.stat().st_size
+        except OSError:  # evicted while we count
+            pass
+    lines = [
+        "# HELP playout_endpoint_up 1 if the last read of the control plane's playout endpoint succeeded.",
+        "# TYPE playout_endpoint_up gauge",
+        f"playout_endpoint_up {STATS['endpoint_up']}",
+        "# HELP playout_last_sync_timestamp_seconds When the playout endpoint last answered.",
+        "# TYPE playout_last_sync_timestamp_seconds gauge",
+        f"playout_last_sync_timestamp_seconds {STATS['last_sync']:.0f}",
+        "# HELP playout_track_failures_total Tracks that could not be downloaded or checked.",
+        "# TYPE playout_track_failures_total counter",
+        f"playout_track_failures_total {STATS['track_failures']}",
+        "# HELP playout_cache_bytes Size of the track cache.",
+        "# TYPE playout_cache_bytes gauge",
+        f"playout_cache_bytes {cache}",
+        "# HELP playout_station_running 1 while the station's Liquidsoap process runs.",
+        "# TYPE playout_station_running gauge",
+    ]
+    lines += [f'playout_station_running{{station="{sid}"}} {int(st.running())}' for sid, st in sorted(stations.items())]
+    lines += [
+        "# HELP playout_station_restarts_total Times the station's Liquidsoap process exited and was restarted.",
+        "# TYPE playout_station_restarts_total counter",
+    ]
+    lines += [f'playout_station_restarts_total{{station="{sid}"}} {st.restarts}' for sid, st in sorted(stations.items())]
+    return "\n".join(lines) + "\n"
+
+
+def serve_metrics(supervisor):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != "/metrics":
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = metrics(supervisor).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("0.0.0.0", METRICS_PORT), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
 def healthcheck():

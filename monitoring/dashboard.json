@@ -151,7 +151,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "count(icecast_mount_up{instance=~\"$instance\"}) or vector(0)"
+          "expr": "count(icecast_mount_up{instance=~\"$instance\",station!=\"\"}) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -177,7 +177,8 @@
         },
         "colorMode": "value",
         "graphMode": "area"
-      }
+      },
+      "description": "Live mounts with a DJ source (MP3 and Opus count separately). AutoDJ is not counted here."
     },
     {
       "id": 3,
@@ -354,7 +355,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (station) (icecast_mount_listeners{instance=~\"$instance\"})",
+          "expr": "sum by (station) ({__name__=~\"icecast_mount_listeners|tc_autodj_mount_listeners\", instance=~\"$instance\", station!=\"\"})",
           "legendFormat": "{{station}}"
         }
       ],
@@ -386,7 +387,7 @@
           "mode": "multi"
         }
       },
-      "description": "Stations appear only while their source is connected."
+      "description": "Stations appear only while a source is connected. Includes listeners moved to AutoDJ."
     },
     {
       "id": 6,
@@ -409,7 +410,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (station) (rate(icecast_mount_sent_bytes_total{instance=~\"$instance\"}[5m])) * 8",
+          "expr": "sum by (station) (rate({__name__=~\"icecast_mount_sent_bytes_total|tc_autodj_mount_sent_bytes_total\", instance=~\"$instance\", station!=\"\"}[5m])) * 8",
           "legendFormat": "{{station}}"
         }
       ],
@@ -803,6 +804,150 @@
         "dedupStrategy": "none"
       },
       "description": "Error log (log_type=error) and access log (log_type=access). Filter with Station and Log level above; open a line for module, mount, status and user."
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Stations on live vs AutoDJ",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 12,
+        "h": 8
+      },
+      "description": "AutoDJ stations (#66): live = a DJ is connected; AutoDJ = only the AutoDJ source plays; off air = AutoDJ is enabled but neither source is up.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "live",
+          "expr": "count(count by (instance, station) (icecast_mount_up{instance=~\"$instance\",station!=\"\"})) or vector(0)"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "AutoDJ",
+          "expr": "count(count by (instance, station) (tc_autodj_mount_up{instance=~\"$instance\"}) unless on (instance, station) icecast_mount_up{station!=\"\"}) or vector(0)"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "off air",
+          "expr": "count(tc_station_autodj_enabled{instance=~\"$instance\"} unless on (instance, station) (tc_autodj_mount_up or icecast_mount_up{station!=\"\"})) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "off air"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "AutoDJ playout",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 50,
+        "w": 12,
+        "h": 8
+      },
+      "description": "The playout service (Compose profile autodj): stations it runs, Liquidsoap restarts, and whether it can read the control plane.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "stations running",
+          "expr": "sum by (instance) (playout_station_running{instance=~\"$instance\"})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "restarts (15m)",
+          "expr": "sum by (instance) (increase(playout_station_restarts_total{instance=~\"$instance\"}[15m]))"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "endpoint up",
+          "expr": "max by (instance) (playout_endpoint_up{instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 0
+          },
+          "noValue": "AutoDJ is not enabled on this node"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ],
   "description": "Tropicast streaming node. Pick the stack's grafanacloud-<stack>-prom data source in 'Data source' and grafanacloud-<stack>-logs in 'Logs data source'."

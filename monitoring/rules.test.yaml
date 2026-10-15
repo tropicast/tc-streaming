@@ -89,3 +89,121 @@ tests:
       - eval_time: 14m
         alertname: StationSourceDropped
         exp_alerts: []
+
+  # AutoDJ (#66). AutoDJ mounts carry only a mount label in icecast_mount_up.
+  - name: DJ drops while AutoDJ covers the station
+    interval: 1m
+    input_series:
+      - series: icecast_mount_up{instance="tc-stream-1",job="icecast",mount="/stations/42/live.mp3",station="42",format="mp3"}
+        values: 1 1 stale
+      - series: icecast_mount_up{instance="tc-stream-1",job="icecast",mount="/stations/42/autodj.mp3"}
+        values: 1 1 1 1 1 1
+      - series: tc_autodj_mount_up{instance="tc-stream-1",job="icecast",station="42",format="mp3"}
+        values: 1 1 1 1 1 1
+      - series: tc_station_autodj_enabled{instance="tc-stream-1",job="icecast",station="42"}
+        values: 1 1 1 1 1 1
+      - series: icecast_up{instance="tc-stream-1",job="icecast"}
+        values: 1 1 1 1 1 1
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: StationSourceDropped
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: AutoDJSourceMissing
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: StationOffAir
+        exp_alerts: []
+
+  - name: AutoDJ source goes missing, then the DJ too
+    interval: 1m
+    input_series:
+      - series: tc_station_autodj_enabled{instance="tc-stream-1",job="icecast",station="42"}
+        values: 1x12
+      # A series that disappears from the exporter gets a staleness marker.
+      - series: tc_autodj_mount_up{instance="tc-stream-1",job="icecast",station="42",format="mp3"}
+        values: 1 stale
+      - series: icecast_mount_up{instance="tc-stream-1",job="icecast",mount="/stations/42/live.mp3",station="42",format="mp3"}
+        values: 1x7 stale
+      - series: icecast_up{instance="tc-stream-1",job="icecast"}
+        values: 1x12
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AutoDJSourceMissing
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: AutoDJSourceMissing
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: tc-stream-1, job: icecast, station: "42"}
+            exp_annotations:
+              summary: Station 42 has AutoDJ but no AutoDJ source.
+              description: When its DJ drops, listeners get nothing. Look for the station in `deploy.sh compose logs playout` (no playable track, refused credential, Liquidsoap exits).
+      - eval_time: 7m
+        alertname: StationOffAir
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: StationOffAir
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: tc-stream-1, job: icecast, station: "42"}
+            exp_annotations:
+              summary: Station 42 is off air (no DJ and no AutoDJ).
+              description: Same causes as AutoDJSourceMissing; check the playout logs first.
+
+  - name: No AutoDJ alerts while Icecast is down
+    interval: 1m
+    input_series:
+      - series: tc_station_autodj_enabled{instance="tc-stream-1",job="icecast",station="42"}
+        values: 1x10
+      - series: icecast_up{instance="tc-stream-1",job="icecast"}
+        values: 0x10
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AutoDJSourceMissing
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: StationOffAir
+        exp_alerts: []
+
+  - name: Playout down only matters with AutoDJ stations
+    interval: 1m
+    input_series:
+      - series: up{instance="tc-stream-1",job="playout"}
+        values: 0x6
+      - series: up{instance="tc-stream-2",job="playout"}
+        values: 0x6
+      - series: tc_station_autodj_enabled{instance="tc-stream-1",job="icecast",station="42"}
+        values: 1x6
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PlayoutDown
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: tc-stream-1, job: playout}
+            exp_annotations:
+              summary: The AutoDJ playout service on tc-stream-1 is down.
+              description: Stations without a DJ are off air. `deploy.sh compose ps playout` and `logs playout` on the node; see docs/runbook.md, AutoDJ.
+
+  - name: Playout endpoint failing and a station restarting
+    interval: 1m
+    input_series:
+      - series: playout_endpoint_up{instance="tc-stream-1",job="playout"}
+        values: 1 0x20
+      - series: playout_station_restarts_total{instance="tc-stream-1",job="playout",station="42"}
+        values: 0 0 1 2 3 4
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PlayoutEndpointFailing
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: PlayoutEndpointFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: tc-stream-1, job: playout}
+            exp_annotations:
+              summary: The playout service on tc-stream-1 cannot read the control plane.
+              description: Stations keep their last playlist, but changes and new stations do not arrive. Check PLAYOUT_URL, PLAYOUT_PASSWORD on both sides and the private network.
+      - eval_time: 5m
+        alertname: PlayoutStationRestarting
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: tc-stream-1, job: playout, station: "42"}
+            exp_annotations:
+              summary: AutoDJ for station 42 keeps restarting.
+              description: Liquidsoap exited 4 times in 15 minutes; its error is in `deploy.sh compose logs playout`.

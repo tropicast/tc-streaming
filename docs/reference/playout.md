@@ -89,6 +89,36 @@ to Icecast on the internal Docker network and to the control plane.
   ago (or two poll intervals). It is written between track downloads too,
   so a long first sync does not fail the deploy's `--wait`.
 
+## Metrics and alerts
+
+Issue #66. Alloy (Compose profile `monitoring`) scrapes two sources:
+
+| Metric | From | Labels | |
+|---|---|---|---|
+| `tc_station_autodj_enabled` | exporter, `stations.json` | `station` | 1 per station with `"autodj": true` |
+| `tc_autodj_mount_up` | exporter, Icecast stats | `station`, `format` | 1 while the AutoDJ mount has a source |
+| `tc_autodj_mount_listeners`, `tc_autodj_mount_sent_bytes_total` | exporter | `station`, `format` | Listeners moved to AutoDJ, and their bytes |
+| `playout_endpoint_up` | playout `:9101` | | 1 if the last read of the control plane worked |
+| `playout_last_sync_timestamp_seconds` | playout | | When it last answered |
+| `playout_station_running` | playout | `station` | 1 while its Liquidsoap runs |
+| `playout_station_restarts_total` | playout | `station` | Liquidsoap exits |
+| `playout_track_failures_total` | playout | | Tracks that failed to download or check |
+| `playout_cache_bytes` | playout | | Track cache size |
+
+- The AutoDJ mounts' own `icecast_mount_*` series keep only a `mount`
+  label. Readers that key mounts by `station` and `format` (the control
+  plane's `ExporterMetrics`, the *Live stations* panel) see the live mounts
+  alone; add the `tc_autodj_mount_*` series to count AutoDJ listeners.
+- The playout metrics port is on the internal Docker network only. Without
+  the `autodj` profile the scrape fails and `up{job="playout"}` is 0; the
+  alerts only look at it on nodes with AutoDJ stations.
+- Alerts (`monitoring/rules.yaml`): **PlayoutDown**, **AutoDJSourceMissing**,
+  **StationOffAir**, **PlayoutEndpointFailing**, **PlayoutStationRestarting**
+  ([what they mean](../how-to/set-up-monitoring.md#what-the-alerts-mean)).
+  **StationSourceDropped** stays quiet while AutoDJ plays for the station.
+- Dashboard: *Stations on live vs AutoDJ* (live, AutoDJ only, off air) and
+  *AutoDJ playout* (stations running, restarts, endpoint).
+
 ## Playout endpoint contract
 
 The control plane implements it (tc-dashboard#107).

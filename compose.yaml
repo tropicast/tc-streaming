@@ -102,6 +102,8 @@ services:
     command: ["python3", "-u", "/srv/icecast_exporter.py"]
     volumes:
       - ./exporter/icecast_exporter.py:/srv/icecast_exporter.py:ro
+      # AutoDJ stations (#66).
+      - ${STATIONS_JSON:-./deploy/stations.example.json}:/etc/icecast/stations.json:ro
     environment:
       ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:-}
       HCLOUD_READ_TOKEN: ${HCLOUD_READ_TOKEN:-}
