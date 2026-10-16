@@ -129,7 +129,11 @@ def icecast_lines():
         lines += [f"# HELP {metric} AutoDJ mount: {help_text}", f"# TYPE {metric} {kind}"]
         for source, match in sources:
             if match and match["kind"] == "autodj":
-                lines.append(f'{metric}{{station="{escape(match["station"])}",format="{match["format"]}"}} {value(source)}')
+                sample = value(source)
+                # An unknown start time is left out rather than 0: a reader comparing start times would see a restart.
+                if name == "start_timestamp_seconds" and not sample:
+                    continue
+                lines.append(f'{metric}{{station="{escape(match["station"])}",format="{match["format"]}"}} {sample}')
     return lines
 
 

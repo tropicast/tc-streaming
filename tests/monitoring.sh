@@ -184,8 +184,9 @@ check "station 42 has AutoDJ for MP3" 1 "$(query_until 'tc_station_autodj_enable
 check "station 42's AutoDJ mount has a source" 1 "$(query_until 'tc_autodj_mount_up{instance="test-node",station="42",format="mp3"}' 1)"
 check "station 42's AutoDJ mount has a start time" 1 \
     "$(query_until 'count(tc_autodj_mount_start_timestamp_seconds{instance="test-node",station="42",format="mp3"} > 0)' 1)"
-check "station 42's AutoDJ mount has a bitrate" 1 \
-    "$(query_until 'count(tc_autodj_mount_bitrate_kbps{instance="test-node",station="42",format="mp3"} > 0)' 1)"
+# Exactly 64: playout declares the configured bitrate (ice-bitrate), it is not measured.
+check "station 42's AutoDJ mount reports its configured bitrate" 1 \
+    "$(query_until 'tc_autodj_mount_bitrate_kbps{instance="test-node",station="42",format="mp3"} == bool 64' 1)"
 check "AutoDJ mounts stay out of the station-keyed series" 1 \
     "$(query_until 'count(icecast_mount_up{instance="test-node",station="42"})' 1)"
 check "playout is scraped" 1 "$(query_until 'up{job="playout",instance="test-node"}' 1)"
