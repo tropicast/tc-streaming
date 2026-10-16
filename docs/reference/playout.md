@@ -98,6 +98,8 @@ Issue #66. Alloy (Compose profile `monitoring`) scrapes two sources:
 | `tc_station_autodj_enabled` | exporter, `stations.json` | `station`, `format` | 1 per format of a station with `"autodj": true` (its `formats`, else MP3 and Opus) |
 | `tc_autodj_mount_up` | exporter, Icecast stats | `station`, `format` | 1 while the AutoDJ mount has a source |
 | `tc_autodj_mount_listeners`, `tc_autodj_mount_sent_bytes_total` | exporter | `station`, `format` | Listeners moved to AutoDJ, and their bytes |
+| `tc_autodj_mount_start_timestamp_seconds` | exporter | `station`, `format` | When the AutoDJ source connected; absent when Icecast gives none. A change means playout restarted and the sent-bytes counter reset (#77) |
+| `tc_autodj_mount_bitrate_kbps` | exporter | `station`, `format` | The output's configured bitrate: playout declares it with `ice-bitrate`, since `%ffmpeg` hides it from Liquidsoap (#77) |
 | `playout_endpoint_up` | playout `:9101` | | 1 if the last read of the control plane worked |
 | `playout_last_sync_timestamp_seconds` | playout | | When it last answered |
 | `playout_station_running` | playout | `station` | 1 while its Liquidsoap runs |
