@@ -233,6 +233,12 @@ source). Useful queries:
 {job="icecast", log_type="error"} |= "auth_url"          # auth endpoint answers
 ```
 
+Two warnings are expected and need no action, both once per Icecast start:
+`serving of static files has been disabled` (Caddy is the only web front end,
+`<fileserve>0</fileserve>`) and `Unsupported or legacy stream type: "audio/mpeg"`
+(Icecast 2.5 has no MP3-specific handler; MP3 plays normally). Any other
+`WARN` is worth a look.
+
 On the node (also for Caddy, whose logs are not shipped yet):
 
 ```sh

@@ -16,6 +16,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Fixed
 
+- Icecast warnings in the logs: source auth reads only the new-style answer headers (`x-icecast-auth-result: ok`; **the control plane must send them first**: tc-dashboard#135); MP3 AutoDJ title updates send `song` only; `GET /admin/metadata` (how every ICY source updates titles) runs in Icecast's legacy mode, so it is not reported as an unsafe use of GET.
 - A deploy that changes `config.alloy` or the exporter now restarts Alloy or the exporter: Compose did not recreate them, so they kept the old file (the *AutoDJ playout* panel showed "AutoDJ is not enabled on this node" because Alloy never scraped playout).
 - The playout service accepts tracks without `sha256` (cached by track id), as tc-dashboard sends them.
 - The deploy signs the playout service in with the source auth node credentials unless `PLAYOUT_USER` / `PLAYOUT_PASSWORD` are set, and the runbook's `PLAYOUT_URL` is tc-dashboard's `/internal/playout/stations`.

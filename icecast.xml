@@ -57,6 +57,10 @@
                      the station's plan (#8). Sent as header.ice-bitrate etc. -->
                 <option name="headers" value="ice-bitrate,ice-audio-info,content-type" />
                 <option name="header_prefix" value="header." />
+                <!-- New-style answer headers only (x-icecast-auth-result: ok);
+                     unset, Icecast accepts old and new and warns at each load. -->
+                <option name="header_auth" value="x-icecast-auth-result" />
+                <option name="header_timelimit" value="x-icecast-auth-timelimit" />
             </role>
             <!-- ICY metadata updates on a station mount (#72): MP3 sources
                  send track titles apart from the audio, as
@@ -69,6 +73,8 @@
                 <option name="action_add" value="metadata_auth" />
                 <option name="username" value="" />
                 <option name="password" value="" />
+                <option name="header_auth" value="x-icecast-auth-result" />
+                <option name="header_timelimit" value="x-icecast-auth-timelimit" />
             </role>
             <role type="anonymous" match-method="source,put" deny-all="*" />
         </authentication>
@@ -94,6 +100,11 @@
         <adminroot>/usr/local/share/icecast/admin</adminroot>
         <reportxmldb>/usr/local/share/icecast/report-db.xml</reportxmldb>
         <pidfile>/run/icecast/icecast.pid</pidfile>
+        <!-- ICY metadata updates (MP3 track titles) arrive as GET
+             /admin/metadata from Liquidsoap, BUTT, Mixxx…: none can use
+             POST. Legacy mode accepts that without a warning per title;
+             only this path, everything else keeps the strict default. -->
+        <resource source="/admin/metadata" omode="legacy" />
     </paths>
 
     <!-- Both logs go to stdout for Docker. The access log records the
