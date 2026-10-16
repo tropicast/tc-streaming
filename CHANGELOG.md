@@ -9,6 +9,10 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Added
+
+- The exporter reports `tc_autodj_mount_start_timestamp_seconds` and `tc_autodj_mount_bitrate_kbps` (#77), so tc-dashboard can spot a playout restart and estimate AutoDJ egress from the bitrate.
+
 ### Fixed
 
 - The playout service accepts tracks without `sha256` (cached by track id), as tc-dashboard sends them.

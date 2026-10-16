@@ -182,6 +182,10 @@ check "proxy refuses exec" 405 "$(proxy POST "/v1.43/containers/$icecast_id/exec
 # AutoDJ (#66): the exporter's AutoDJ metrics and the playout service's own.
 check "station 42 has AutoDJ for MP3" 1 "$(query_until 'tc_station_autodj_enabled{instance="test-node",station="42",format="mp3"}' 1)"
 check "station 42's AutoDJ mount has a source" 1 "$(query_until 'tc_autodj_mount_up{instance="test-node",station="42",format="mp3"}' 1)"
+check "station 42's AutoDJ mount has a start time" 1 \
+    "$(query_until 'count(tc_autodj_mount_start_timestamp_seconds{instance="test-node",station="42",format="mp3"} > 0)' 1)"
+check "station 42's AutoDJ mount has a bitrate" 1 \
+    "$(query_until 'count(tc_autodj_mount_bitrate_kbps{instance="test-node",station="42",format="mp3"} > 0)' 1)"
 check "AutoDJ mounts stay out of the station-keyed series" 1 \
     "$(query_until 'count(icecast_mount_up{instance="test-node",station="42"})' 1)"
 check "playout is scraped" 1 "$(query_until 'up{job="playout",instance="test-node"}' 1)"

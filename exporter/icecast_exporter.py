@@ -47,8 +47,10 @@ STATIONS_FILE = os.environ.get("STATIONS_FILE", "/etc/icecast/stations.json")
 # A station's live mount, or its hidden AutoDJ mount (#62).
 STATION = re.compile(r"^/stations/(?P<station>[A-Za-z0-9-]+)/(?P<kind>live|autodj)\.(?P<format>mp3|opus)$")
 FORMATS = ("mp3", "opus")  # a station's formats when stations.json names none, as docker-entrypoint.py
-# Per-mount series repeated for AutoDJ mounts as tc_autodj_mount_<name>, keyed by station and format.
-AUTODJ_SERIES = ("up", "listeners", "sent_bytes_total")
+# Per-mount series repeated for AutoDJ mounts as tc_autodj_mount_<name>, keyed by station and format. The start
+# time lets readers spot a playout restart (the sent-bytes counter resets); the bitrate gives egress without a
+# previous sample (#77).
+AUTODJ_SERIES = ("up", "listeners", "sent_bytes_total", "start_timestamp_seconds", "bitrate_kbps")
 
 _hcloud_cache = {"at": 0.0, "lines": []}
 _stations_cache = {"lines": []}
