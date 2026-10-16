@@ -316,7 +316,10 @@ def script(station_id, station, playlist):
         source = "mean(radio)" if output["channels"] == 1 else "radio"
         # %ffmpeg hides the codec from Liquidsoap, so it cannot guess either: Ogg carries
         # titles in the stream, MP3 needs Icecast's ICY metadata updates.
-        extra = ', format="audio/ogg"' if fmt == "opus" else ', format="audio/mpeg", send_icy_metadata=true'
+        # ICY updates carry "song" only ("artist - title"): Icecast warns when
+        # "artist" or "title" come with it, and shows "song" for MP3 anyway.
+        extra = (', format="audio/ogg"' if fmt == "opus"
+                 else ', format="audio/mpeg", send_icy_metadata=true, icy_metadata=["song"]')
         # Nor the bitrate: declare it, so Icecast and the exporter report the configured one at once (#77).
         extra += f', headers=[("ice-bitrate", "{output["bitrate_kbps"]}")]'
         lines.append(

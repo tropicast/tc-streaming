@@ -104,10 +104,11 @@ class Handler(BaseHTTPRequestHandler):
         ok, reason = allowed(fields)
         print(f"{fields.get('action')} mount={fields.get('mount')} user={fields.get('user')} -> {'allow' if ok else 'deny: ' + reason}", flush=True)
         self.send_response(200)
+        # New-style headers: icecast.xml sets header_auth (x-icecast-auth-result).
         if ok:
-            self.send_header("icecast-auth-user", "1")
+            self.send_header("x-icecast-auth-result", "ok")
         else:
-            self.send_header("icecast-auth-message", reason)
+            self.send_header("x-icecast-auth-message", reason)
         self.end_headers()
 
     def log_message(self, *args):

@@ -220,4 +220,10 @@ for value in "$playout_password" "$wrong99" "${secret[42]}" "${secret[77]}" "${s
 done
 check "logs contain no credential or track URL" clean "$leaked"
 
+# Icecast warnings this setup used to log for every config load and title.
+for warning in 'Please set "header_auth"' 'Please set "header_timelimit"' 'contains "song" but also' 'uses safe method GET'; do
+    check "Icecast does not warn: $warning" no "$(logged icecast "$warning")"
+done
+check "MP3 titles still go through /admin/metadata" yes "$(logged icecast "/admin/metadata")"
+
 exit "$failures"

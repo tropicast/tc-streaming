@@ -28,10 +28,15 @@ must reject requests without these node credentials.
 
 ## Response
 
-- **Allow:** HTTP 200 with the header `icecast-auth-user: 1`.
+- **Allow:** HTTP 200 with the header `x-icecast-auth-result: ok`.
 - **Deny:** HTTP 200 without that header. Add
-  `icecast-auth-message: <reason>` for the Icecast log. Never include the
+  `x-icecast-auth-message: <reason>` for the Icecast log. Never include the
   credential in the reason.
+
+These are Icecast's new-style headers (`header_auth` and `header_timelimit`
+in `icecast.xml`): the old `icecast-auth-user: 1` is **no longer read**. The
+endpoint may send both styles (tc-dashboard does, since tc-dashboard#135); it
+must send the new one before a node with this setting is deployed.
 
 The endpoint must allow a request only when all of these hold:
 
