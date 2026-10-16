@@ -28,6 +28,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: shellcheck deploy/*.sh tests/*.sh
+      - name: deploy.sh restarts services whose files changed
+        run: tests/deploy-reload.sh
       - name: Validate the production Compose file
         run: |
           env_file=$(mktemp)
