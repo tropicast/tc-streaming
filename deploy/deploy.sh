@@ -32,6 +32,19 @@ compose() {
 
 log() { printf '[deploy] %s\n' "$*"; }
 
+# Services whose bind-mounted file this deploy changed. Compose recreates a
+# container only when its definition changes, and neither Alloy nor the
+# exporter rereads its file: start() restarts them.
+changed_files=()
+
+# Installs $1 as $2 (0644); records $3 when the content changed.
+install_watched() {
+    if ! cmp -s "$1" "$2"; then
+        install -m 0644 "$1" "$2"
+        changed_files+=("$3")
+    fi
+}
+
 install_bundle() {
     local bundle=$1
     install -d -m 0750 caddy auth-stub
@@ -44,8 +57,8 @@ install_bundle() {
     # Monitoring files (#10); older bundles do not have them.
     if [[ -f $bundle/icecast_exporter.py ]]; then
         install -d -m 0750 exporter alloy
-        install -m 0644 "$bundle/icecast_exporter.py" exporter/icecast_exporter.py
-        install -m 0644 "$bundle/config.alloy" alloy/config.alloy
+        install_watched "$bundle/icecast_exporter.py" exporter/icecast_exporter.py icecast-exporter
+        install_watched "$bundle/config.alloy" alloy/config.alloy alloy
     fi
     install -m 0750 "$bundle/deploy.sh" deploy.sh.new
     mv deploy.sh.new deploy.sh
@@ -108,13 +121,28 @@ start() {
     fi
 
     local caddy_before="" caddy_after=""
-    caddy_before=$(caddy_started_at)
+    caddy_before=$(started_at caddy)
 
     # Bind-mounted into Icecast: it must exist before the container starts.
     [[ -f stations.json ]] || printf '{}\n' > stations.json
 
+    local service started=()
+    for service in "${changed_files[@]}"; do
+        started+=("$(started_at "$service")")
+    done
+
     log "starting services"
     compose up -d --wait --remove-orphans
+
+    # A container this deploy did not recreate still runs the old file.
+    local i
+    for i in "${!changed_files[@]}"; do
+        service=${changed_files[$i]}
+        if [[ -n ${started[$i]} && ${started[$i]} == "$(started_at "$service")" ]]; then
+            log "$service file changed: restarting it"
+            compose restart "$service" >/dev/null
+        fi
+    done
 
     # Icecast may not have restarted; make it use the current limits.
     reload_stations
@@ -122,7 +150,7 @@ start() {
     # A Caddy container that this deploy started already runs the new
     # Caddyfile. Reloading it right away would interrupt its first
     # certificate requests.
-    caddy_after=$(caddy_started_at)
+    caddy_after=$(started_at caddy)
     if [[ -n $caddy_before && $caddy_before == "$caddy_after" ]]; then
         # Pick up Caddyfile changes without dropping connections. Without
         # --force, Caddy does nothing when the config is unchanged.
@@ -150,9 +178,11 @@ reload_stations() {
     compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.py reload-stations
 }
 
-caddy_started_at() {
+# Start time of a service's container; empty when it is not running (or not
+# in the active profiles).
+started_at() {
     local id
-    id=$(compose ps -q caddy 2>/dev/null || true)
+    id=$(compose ps -q "$1" 2>/dev/null || true)
     if [[ -n $id ]]; then
         docker inspect -f '{{.State.StartedAt}}' "$id" 2>/dev/null || true
     fi

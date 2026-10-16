@@ -33,6 +33,7 @@ is on.
 | Icecast secrets or settings in `.env` | Same as an image change. |
 | Caddy image (`caddy/Dockerfile`: Caddy or caddy-l4 version) | Caddy restarts. All connections drop for a few seconds. |
 | Playout image (`playout/`) or `PLAYOUT_*` settings | Playout restarts. Listeners who are on AutoDJ at that moment disconnect; live stations are not affected. |
+| `deploy/alloy/config.alloy` or `exporter/icecast_exporter.py` | Alloy or the exporter restarts (`… file changed: restarting it` in the deploy log). None for listeners; a gap of a few seconds in metrics. |
 
 The deploy uses the Icecast, Caddy and playout images of the last `main`
 commits that changed their files (`ghcr.io/tropicast/icecast`,
