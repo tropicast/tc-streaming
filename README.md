@@ -106,6 +106,7 @@ workflows and what they run: [docs/how-to/build-and-test.md](docs/how-to/build-a
 | [Build and test](docs/how-to/build-and-test.md)                   | CI workflows, image tags, caches                                     |
 | [Load test](docs/load-test.md)                                    | Capacity of one node                                                 |
 | [Latency](docs/reference/latency.md)                              | Microphone-to-ear delay, switches, AutoDJ warm-up, budgets           |
+| [ADR 0001: live/AutoDJ switch](docs/adr/0001-live-autodj-switch.md) | Why switches stay an Icecast fallback (#87)                       |
 | [Changelog](CHANGELOG.md)                                         | Changes per release; releasing: [runbook](docs/runbook.md#releasing) |
 
 ## Contributing
