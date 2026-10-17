@@ -6,7 +6,10 @@
 //	         -url https://listen.example.com/stations/42/live.mp3 -listeners 700 \
 //	         -ramp 5m -hold 10m
 //
-// It prints one line every -every and a JSON summary at the end.
+// It prints one line every -every and a JSON summary at the end. A stall is a
+// gap longer than -stall between two reads after the first byte: a player
+// whose buffer is shorter than the gap goes silent (#85 cut Icecast's
+// start-up burst to 0.5 s, so players start with less in hand).
 package main
 
 import (
@@ -42,9 +45,19 @@ func (m *ints) Set(v string) error {
 }
 
 type stats struct {
-	active, bytes, connects, drops, refused, errors atomic.Int64
-	mu                                              sync.Mutex
-	ttfb                                            []time.Duration
+	active, bytes, connects, drops, refused, errors, stalls atomic.Int64
+	maxGap                                                  atomic.Int64 // nanoseconds
+	mu                                                      sync.Mutex
+	ttfb                                                    []time.Duration
+}
+
+// addGap counts a stall and keeps the longest gap seen.
+func (s *stats) addGap(d time.Duration) {
+	if d > *stall {
+		s.stalls.Add(1)
+	}
+	for old := s.maxGap.Load(); int64(d) > old && !s.maxGap.CompareAndSwap(old, int64(d)); old = s.maxGap.Load() {
+	}
 }
 
 func (s *stats) addTTFB(d time.Duration) {
@@ -67,6 +80,7 @@ func (s *stats) ttfbPercentile(p float64) time.Duration {
 var (
 	insecure = flag.Bool("insecure", false, "skip TLS verification (local tests only)")
 	connect  = flag.String("connect", "", "host:port to dial instead of the URL's host (local tests)")
+	stall    = flag.Duration("stall", 500*time.Millisecond, "count a gap longer than this between reads as a stall")
 )
 
 func newClient() *http.Client {
@@ -113,13 +127,18 @@ func listen(ctx context.Context, url string, s *stats) {
 		s.connects.Add(1)
 		s.active.Add(1)
 		first := true
+		var last time.Time
 		for {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
+				now := time.Now()
 				if first {
-					s.addTTFB(time.Since(start))
+					s.addTTFB(now.Sub(start))
 					first = false
+				} else {
+					s.addGap(now.Sub(last))
 				}
+				last = now
 				s.bytes.Add(int64(n))
 			}
 			if err != nil {
@@ -195,7 +214,7 @@ func main() {
 	last := make([]int64, len(urls))
 	ticker := time.NewTicker(*every)
 	defer ticker.Stop()
-	fmt.Println("elapsed  url  active  Mbit/s  connects  drops  refused  errors  ttfb_p95")
+	fmt.Println("elapsed  url  active  Mbit/s  connects  drops  refused  errors  stalls  max_gap  ttfb_p95")
 	for done := false; !done; {
 		select {
 		case <-ctx.Done():
@@ -206,9 +225,10 @@ func main() {
 			b := s.bytes.Load()
 			mbps := float64(b-last[i]) * 8 / every.Seconds() / 1e6
 			last[i] = b
-			fmt.Printf("%6.0fs  %d  %6d  %6.1f  %8d  %5d  %7d  %6d  %v\n",
+			fmt.Printf("%6.0fs  %d  %6d  %6.1f  %8d  %5d  %7d  %6d  %6d  %7v  %v\n",
 				time.Since(begin).Seconds(), i, s.active.Load(), mbps, s.connects.Load(),
-				s.drops.Load(), s.refused.Load(), s.errors.Load(), s.ttfbPercentile(0.95).Round(time.Millisecond))
+				s.drops.Load(), s.refused.Load(), s.errors.Load(), s.stalls.Load(),
+				time.Duration(s.maxGap.Load()).Round(time.Millisecond), s.ttfbPercentile(0.95).Round(time.Millisecond))
 		}
 	}
 	wg.Wait()
@@ -217,6 +237,8 @@ func main() {
 		URL                                     string
 		Listeners                               int
 		Bytes, Connects, Drops, Refused, Errors int64
+		Stalls                                  int64
+		MaxGap                                  string
 		MBPerListenerHour                       float64
 		TTFBp50, TTFBp95                        string
 	}
@@ -227,6 +249,7 @@ func main() {
 		out = append(out, result{
 			URL: urls[i], Listeners: counts[i], Bytes: s.bytes.Load(), Connects: s.connects.Load(),
 			Drops: s.drops.Load(), Refused: s.refused.Load(), Errors: s.errors.Load(),
+			Stalls: s.stalls.Load(), MaxGap: time.Duration(s.maxGap.Load()).Round(time.Millisecond).String(),
 			MBPerListenerHour: float64(s.bytes.Load()) / 1e6 / listenerHours,
 			TTFBp50:           s.ttfbPercentile(0.5).Round(time.Millisecond).String(),
 			TTFBp95:           s.ttfbPercentile(0.95).Round(time.Millisecond).String(),

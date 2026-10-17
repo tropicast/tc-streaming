@@ -289,3 +289,53 @@ machine with enough bandwidth (a temporary Hetzner CX33 in the same location
 works), and restore the cap
 afterwards. Each 1,000 listeners at MP3 128 kbps cost about 74 GB of the
 node's quota per hour.
+
+## Re-test after the latency changes (#83)
+
+#85 cut each station mount's start-up burst from 64 KiB to 0.5 s of audio,
+and `<source-timeout>` from 10 s to 3 s. A player now starts with less audio
+in hand, so a network gap it used to ride out may become a silence.
+`tools/loadtest` counts these: a **stall** is a gap longer than `-stall`
+(500 ms) between two reads after the first byte. `MaxGap` is the longest
+gap.
+
+Pass when, compared with the 2026-10-06 run above:
+
+- no drops, refusals or errors, as before;
+- stalls: none during the hold at 1,400 listeners, none over the 24 h soak;
+  max gap under 500 ms (Icecast writes every ~100 ms);
+- time to first audio p95 no worse than 1 s (Opus) and 400 ms (MP3);
+- the node's CPU, memory and egress per listener-hour within 10 % of the
+  tables above.
+
+Steps, with the release that contains #85 deployed on the node:
+
+1. Raise station 42's cap to 1,500 with `deploy.sh apply-stations` (no
+   restart), as in #12.
+2. Publish the two sources from `tc-runner-1`, with the desktop app's
+   encoder flags (tc-station `FfmpegExecutable.Arguments`):
+
+   ```sh
+   ffmpeg -re -f lavfi -i "anoisesrc=color=pink:sample_rate=44100" -ac 2 \
+     -c:a libmp3lame -b:a 128k -flush_packets 1 -write_xing 0 \
+     -content_type audio/mpeg -ice_public 0 -f mp3 -tls 1 \
+     "icecast://42:<password>@ingest.tropicastradio.com:443/stations/42/live.mp3" &
+   ffmpeg -re -f lavfi -i "anoisesrc=color=pink:sample_rate=48000" -ac 2 \
+     -c:a libopus -b:a 64k -application audio -flush_packets 1 -page_duration 100000 \
+     -content_type audio/ogg -ice_public 0 -f ogg -tls 1 \
+     "icecast://42:<password>@ingest.tropicastradio.com:443/stations/42/live.opus" &
+   ```
+
+3. Sample the node (10 s for the ramp test, 60 s for the soak):
+   `ssh ops@<node> 'bash -s 10' < tests/load/sample-node.sh > node-ramp.csv`.
+4. Ramp test, from `tc-runner-1` (`go build ./tools/loadtest`):
+
+   ```sh
+   ./loadtest -url https://listen.tropicastradio.com/stations/42/live.opus -listeners 700 \
+              -url https://listen.tropicastradio.com/stations/42/live.mp3 -listeners 700 \
+              -ramp 5m -hold 10m | tee ramp.txt
+   ```
+
+5. Soak: the same with `-listeners 150` each, `-ramp 2m -hold 24h -every 5m`,
+   under `nohup` or `tmux`, and the node sampled every 60 s.
+6. Restore station 42's cap, stop the sources, and add the results here.
