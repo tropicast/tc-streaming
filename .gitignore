@@ -13,4 +13,5 @@ infra/ansible/group_vars/
 .tmp-autodj.*/
 .tmp-bench.*/
 .tmp-monitoring.*/
+.tmp-latency.*/
 **/graphify-out

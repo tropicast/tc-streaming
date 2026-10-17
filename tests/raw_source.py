@@ -57,7 +57,9 @@ def main():
         return
     conn.settimeout(None)
     try:
-        while chunk := sys.stdin.buffer.read(4096):
+        # read1: send what the encoder has written, without waiting for 4 KiB
+        # (half a second at 64 kbps).
+        while chunk := sys.stdin.buffer.read1(4096):
             conn.sendall(chunk)
     except (BrokenPipeError, ConnectionError, ssl.SSLError):
         pass

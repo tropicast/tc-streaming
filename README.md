@@ -72,6 +72,7 @@ tests/source-auth.sh     # source auth rules end to end
 tests/gateway.sh         # TLS gateway: routing, both upload styles, headers, log redaction
 tests/station-limits.sh  # caps, plan formats and bitrates, reload keeping listeners
 tests/monitoring.sh      # exporter metrics and Icecast logs, against a local Prometheus and Loki
+tests/latency.sh         # microphone-to-ear delay and live/AutoDJ switches, against budgets
 ```
 
 They build the images themselves (set `E2E_PREBUILT=1` to reuse them). CI
@@ -104,6 +105,7 @@ workflows and what they run: [docs/how-to/build-and-test.md](docs/how-to/build-a
 | [Set up monitoring](docs/how-to/set-up-monitoring.md)             | Grafana Cloud metrics, logs, alerts and dashboard                    |
 | [Build and test](docs/how-to/build-and-test.md)                   | CI workflows, image tags, caches                                     |
 | [Load test](docs/load-test.md)                                    | Capacity of one node                                                 |
+| [Latency](docs/reference/latency.md)                              | Microphone-to-ear delay, switches, AutoDJ warm-up, budgets           |
 | [Changelog](CHANGELOG.md)                                         | Changes per release; releasing: [runbook](docs/runbook.md#releasing) |
 
 ## Contributing

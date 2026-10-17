@@ -11,6 +11,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Added
 
+- `tests/latency.sh` (#84) measures, in CI, how far behind the microphone a listener hears the station, how late they hear a switch between live and AutoDJ, and the AutoDJ warm-up, against budgets ([Latency](docs/reference/latency.md)). Baseline: 4.3 s (MP3) and 5.5 s (Opus), switches included, mostly Icecast's burst.
 - The exporter reports `tc_autodj_mount_start_timestamp_seconds` and `tc_autodj_mount_bitrate_kbps` (#77), so tc-dashboard can spot a playout restart and estimate AutoDJ egress from the bitrate. The start time is left out when Icecast gives none.
 - The playout service declares each AutoDJ output's bitrate (`ice-bitrate`): `%ffmpeg` hides it from Liquidsoap, so Icecast only had a measured estimate. Deploying it restarts the AutoDJ sources.
 
