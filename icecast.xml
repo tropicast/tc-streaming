@@ -23,10 +23,16 @@
         <queue-size>524288</queue-size>
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
-        <!-- Drop a silent source after 10 s so the desktop app reconnects. -->
-        <source-timeout>10</source-timeout>
-        <!-- Initial burst: about 8 s at 64 kbps for a fast start. -->
-        <burst-size>65536</burst-size>
+        <!-- Drop a silent source after 3 s: a DJ whose connection died
+             (no FIN, e.g. a lost uplink) hands over to AutoDJ that soon, and
+             the desktop app reconnects (#85). Its encoder sends audio,
+             silence included, many times a second. -->
+        <source-timeout>3</source-timeout>
+        <!-- Initial burst for mounts without a station bitrate cap: 0.5 s at
+             128 kbps, 1 s at 64 kbps. A listener stays one burst behind the
+             source, so it is delay (#85, docs/reference/latency.md). Station
+             mounts get theirs from docker-entrypoint.py (BURST_SECONDS). -->
+        <burst-size>8192</burst-size>
     </limits>
 
     <authentication>

@@ -10,19 +10,23 @@
 #   2. A DJ on air for 35 s (MP3 128 kbps and Opus 64 kbps on one station),
 #      a listener per format from 12 s, AutoDJ for 10 s, the DJ again for
 #      15 s, AutoDJ to the end. latency.py turns the recordings into delays.
+#   3. A DJ whose connection dies without closing (a lost uplink): after
+#      10 s the source sends nothing more but keeps its connection open.
+#      Icecast's <source-timeout> decides when listeners get AutoDJ.
 #
 # Each delay has a budget (LATENCY_MAX_*, seconds); over budget fails. The
 # budgets start at what main measures and go down as #83's sub-issues land.
 # Needs Docker with Compose, ffmpeg with libmp3lame and libopus, curl and python3.
 set -euo pipefail
 
-# Budgets, seconds. Measured on main before #83 (docs/reference/latency.md):
-# AutoDJ 25-27 s, first audio 0.4-0.6 s, delays and switches 4.3 s (MP3) and
-# 5.5-6.6 s (Opus). About 1-3 s of margin for CI runners.
+# Budgets, seconds (docs/reference/latency.md). With #85's bursts: delays and
+# switches 0.5-0.8 s, but Opus back to live 0.6-1.5 s (the DJ's reconnect
+# stall stays in the delay); a dead source 3-4 s; AutoDJ 25-27 s until #86.
 : "${LATENCY_MAX_AUTODJ_START:=45}"  # library published to first AutoDJ byte
-: "${LATENCY_MAX_FIRST_AUDIO:=2}"    # listener start to the first complete frame
-: "${LATENCY_MAX_DELAY:=8}"          # microphone to ear, live, at connect and steady
-: "${LATENCY_MAX_SWITCH:=9}"         # DJ stops or starts to the listener hearing it
+: "${LATENCY_MAX_FIRST_AUDIO:=1}"    # listener start to the first complete frame
+: "${LATENCY_MAX_DELAY:=1.5}"        # microphone to ear, live, at connect and steady
+: "${LATENCY_MAX_SWITCH:=2}"         # DJ stops or starts to the listener hearing it
+: "${LATENCY_MAX_DEAD_SOURCE:=5}"    # a DJ's connection dies to AutoDJ heard
 
 cd "$(dirname "$0")/.."
 free_port() {
@@ -78,7 +82,7 @@ PY
 
 cat >"$work/stations.json" <<JSON
 {"default": {"max_listeners": 10},
- "stations": {"42": {"max_listeners": 10, "formats": ["mp3", "opus"], "autodj": true}}}
+ "stations": {"42": {"max_listeners": 10, "max_bitrate_kbps": 128, "formats": ["mp3", "opus"], "autodj": true}}}
 JSON
 chmod 0644 "$work/stations.json"
 
@@ -185,37 +189,40 @@ done
 # --- 2. Live, AutoDJ, live ----------------------------------------------------
 
 # A DJ on mount $1 for $2 seconds; latency_source.py writes the time of the
-# first sample to $3. Encoder flags as the desktop app's (tc-station
-# FfmpegExecutable.Arguments).
+# first sample to $3. With $4, the source then sends nothing for $4 seconds
+# but keeps its connection open. Encoder flags as the desktop app's
+# (tc-station FfmpegExecutable.Arguments).
 dj() {
-    local mount=$1 seconds=$2 t0=$3 rate content_type kbps codec
+    local mount=$1 seconds=$2 t0=$3 hang=${4:-0} rate content_type kbps codec
     if [[ $mount == *.mp3 ]]; then
         rate=44100 content_type=audio/mpeg kbps=128
         codec=(-c:a libmp3lame -b:a 128k -flush_packets 1 -write_xing 0 -f mp3)
     else
         rate=48000 content_type=audio/ogg kbps=64
-        codec=(-c:a libopus -b:a 64k -application audio -flush_packets 1 -f ogg)
+        codec=(-c:a libopus -b:a 64k -application audio -flush_packets 1 -page_duration 100000 -f ogg)
     fi
-    python3 tests/latency_source.py --seconds "$seconds" --rate "$rate" --t0 "$t0" |
+    { python3 tests/latency_source.py --seconds "$seconds" --rate "$rate" --t0 "$t0"; sleep "$hang"; } |
         ffmpeg -nostdin -loglevel error -f s16le -ar "$rate" -ac 2 -probesize 32 -analyzeduration 0 -i pipe:0 \
             "${codec[@]}" pipe:1 |
         python3 tests/raw_source.py ingest.localhost "$https_port" "$mount" "42:$secret" --ca "$ca" \
             --connect 127.0.0.1 --content-type "$content_type" --bitrate "$kbps" >/dev/null || true
 }
+# A listener on live.$2 for $3 seconds, recorded into $work/$1.
 listener() {
-    local fmt=$1 seconds=$2
+    local name=$1 fmt=$2 seconds=$3
     curl -sN -m "$seconds" --cacert "$ca" "${pin[@]}" "$listen/stations/42/live.$fmt" |
-        python3 tests/latency_listener.py "$work/$fmt" || true
+        python3 tests/latency_listener.py "$work/$name" || true
 }
 
 for fmt in mp3 opus; do
     dj "/stations/42/live.$fmt" 35 "$work/$fmt.t0.1" &
     pids+=($!)
 done
-# Later than Icecast's burst (8 s at 64 kbps), so the listener gets a full one.
+# Later than any burst Icecast had (8 s at 64 kbps before #85), so the
+# listener gets a full one.
 sleep 12
 for fmt in mp3 opus; do
-    listener "$fmt" 58 &
+    listener "$fmt" "$fmt" 58 &
     pids+=($!)
 done
 sleep 33
@@ -247,6 +254,26 @@ for fmt in mp3 opus; do
     budget "$fmt after_return" "$(field "$fmt" after_return)" "$LATENCY_MAX_DELAY"
     measured["$fmt wire_steady"]=$(field "$fmt" wire_steady)
 done
+
+# --- 3. A DJ whose connection dies --------------------------------------------
+
+for fmt in mp3 opus; do
+    dj "/stations/42/live.$fmt" 10 "$work/dead-$fmt.t0" 15 &
+    pids+=($!)
+done
+sleep 3
+for fmt in mp3 opus; do
+    listener "dead-$fmt" "$fmt" 17 &
+    pids+=($!)
+done
+wait "${pids[@]}" 2>/dev/null || true
+pids=()
+for fmt in mp3 opus; do
+    dead=$(python3 tests/latency.py "$work/dead-$fmt" "$fmt" --session "$(cat "$work/dead-$fmt.t0"):10")
+    echo "info - $fmt, dead source: $dead"
+    budget "$fmt dead_source" "$(python3 -c 'import json, sys; print(json.loads(sys.argv[1]).get("to_autodj"))' "$dead")" \
+        "$LATENCY_MAX_DEAD_SOURCE"
+done
 row() { echo "| $1 | ${measured[mp3 $2]:-} | ${measured[opus $2]:-} | $3 |" >>"$summary"; }
 row "Listener start to first audio" first_audio "$LATENCY_MAX_FIRST_AUDIO"
 row "Microphone to ear, at connect" connect "$LATENCY_MAX_DELAY"
@@ -255,6 +282,7 @@ row "Microphone to listener, on the wire" wire_steady "-"
 row "Live to AutoDJ (DJ stops to AutoDJ heard)" to_autodj "$LATENCY_MAX_SWITCH"
 row "AutoDJ to live (DJ starts to DJ heard)" to_live "$LATENCY_MAX_SWITCH"
 row "Microphone to ear, after the DJ returns" after_return "$LATENCY_MAX_DELAY"
+row "DJ's connection dies to AutoDJ heard" dead_source "$LATENCY_MAX_DEAD_SOURCE"
 echo "| AutoDJ warm-up (library published to first byte) | ${measured[autodj_start]:-} | | $LATENCY_MAX_AUTODJ_START |" >>"$summary"
 cat "$summary"
 [[ -n ${GITHUB_STEP_SUMMARY:-} ]] && { echo "### Latency (#84)"; cat "$summary"; } >>"$GITHUB_STEP_SUMMARY"

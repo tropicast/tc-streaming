@@ -7,9 +7,30 @@ budgets that fail the job.
 
 ## Measured
 
-`main` before #83, one node in Docker, listeners on loopback:
+With #85's bursts (0.5 s at a 128 kbps cap: 8,000 bytes for MP3, 6,000 for
+Opus) and the desktop app's 100 ms Ogg pages (tc-station#74), two local runs:
 
 | Delay (s) | MP3 128 kbps | Opus 64 kbps | Budget |
+|---|---|---|---|
+| Listener start to first audio | 0.2–0.3 | 0.3–0.4 | 1 |
+| Microphone to ear, at connect and steady | 0.6–0.7 | 0.5–0.6 | 1.5 |
+| Microphone to listener, on the wire | 0.25 | 0.15 | - |
+| Live to AutoDJ (DJ stops to AutoDJ heard) | 0.7–0.8 | 0.5–0.6 | 2 |
+| AutoDJ to live (DJ starts to DJ heard) | 0.6–0.7 | 0.6–1.5 | 2 |
+| Microphone to ear, after the DJ returns | 0.5–0.6 | 0.5–1.4 | 1.5 |
+| DJ's connection dies to AutoDJ heard | 3.8 | 4.0 | 5 |
+| AutoDJ warm-up (library published to first byte) | 25 | | 45 |
+
+Back to live on Opus varies: the DJ's connect (TLS, source auth, a new
+chained Ogg stream) can leave the listener without audio for up to a second,
+and a player with no buffer keeps that delay for the rest of the session. A
+dead source is Icecast's `<source-timeout>` (3 s) plus the steady delay.
+
+### Before #83
+
+`main` before #83, one node in Docker, listeners on loopback:
+
+| Delay (s) | MP3 128 kbps | Opus 64 kbps | Budget then |
 |---|---|---|---|
 | Listener start to first audio | 0.4 | 0.6 | 2 |
 | Microphone to ear, at connect | 4.3 | 5.5 | 8 |
@@ -62,6 +83,9 @@ What it shows:
   delay) and to when its bytes arrived ("wire" delay). A switch is measured
   from the end (or start) of the DJ's session to the first AutoDJ (or live)
   audio heard.
+- **Dead source.** The source stops sending after 10 s but keeps its
+  connection open, as a DJ whose uplink died. The delay runs from the last
+  audio it sent to the first AutoDJ audio heard.
 - **Warm-up.** The playout service runs with its default poll (30 s). The
   test publishes a station with 30 tracks to the stub control plane, then
   waits for the first byte on the live mount, which is served by the AutoDJ

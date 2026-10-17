@@ -77,6 +77,17 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   of the source authentication. `docker-entrypoint.py reload-stations`
   re-renders them and reloads Icecast with `SIGHUP`: live listeners and
   sources stay connected.
+- Burst (#85): each station mount, AutoDJ mounts included, gets a
+  `<burst-size>` of 0.5 s at its `max_bitrate_kbps` (Opus counted at no more
+  than 96 kbps), at least 4 KiB: 4 KiB at 64 kbps, 8,000 bytes at 128 kbps,
+  20,000 at 320 kbps. Mounts of a station without a cap use the global 8 KiB.
+  A listener gets the burst at connect, then stays that far behind the
+  source; a client moved by `fallback-mount` or `fallback-override` keeps
+  its place, so a switch adds no backlog of its own
+  ([Latency](latency.md)). A player that buffers before it plays (VLC, most
+  apps) now waits that long at start instead of filling up from the burst.
+- `<source-timeout>` is 3 s: a DJ whose connection dies without closing
+  hands over to AutoDJ about 3 s later, and the desktop app reconnects.
 - `directory` (optional, tc-dashboard#13): public metadata of a station
   listed in directories such as RadioBrowser: `listed`, `name`,
   `description`, `genre`, `homepage`, `logo`, `country_code`,
@@ -126,7 +137,8 @@ Each station can publish two mounts (issue #9):
   (`stations.json`: `formats`, `max_bitrate_kbps`) decides which mounts and
   bitrates it may publish.
 - Measured on production, a 64 kbps Opus stream (stereo, 48 kHz) delivered
-  about **35 MB per listener-hour** including the 64 KB start-up burst and
+  about **35 MB per listener-hour** including the start-up burst (64 KB
+  then; 4–8 KB since #85) and
   Ogg framing, against 28.8 MB for the raw bitrate. #12 measures it at load.
 - **Web player**: use Opus when the browser supports it, otherwise MP3, and
   label higher quality as an explicit choice ("uses more data"):
