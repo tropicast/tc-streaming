@@ -72,7 +72,8 @@ services:
       PLAYOUT_URL: ${PLAYOUT_URL:-}
       PLAYOUT_USER: ${PLAYOUT_USER:-}
       PLAYOUT_PASSWORD: ${PLAYOUT_PASSWORD:-}
-      PLAYOUT_POLL_SECONDS: ${PLAYOUT_POLL_SECONDS:-30}
+      PLAYOUT_POLL_SECONDS: ${PLAYOUT_POLL_SECONDS:-3}
+      PLAYOUT_DOWNLOAD_WORKERS: ${PLAYOUT_DOWNLOAD_WORKERS:-4}
     # Bounded so AutoDJ can never starve Icecast or Caddy (#65). cpu_shares
     # is the container's weight against the others (cgroup v2 cpu.weight 59
     # vs 100): on a busy node, encoding waits, listeners do not. A nice value
