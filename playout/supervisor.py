@@ -7,6 +7,9 @@ station's playlist to its hidden /stations/<id>/autodj.<fmt> mounts (#62).
 - Tracks are downloaded once into a cache keyed by their sha256 (checked),
   or by their id when the endpoint sends no sha256, and listed in a per-station m3u that Liquidsoap reloads on change: a new
   playlist never restarts the station.
+- Downloads run in the background, a few at once, every station's first
+  tracks first. A station goes on air as soon as one of its tracks is in the
+  cache; the others join its playlist as they arrive (#86).
 - A change of outputs, shuffle mode or credential restarts that station
   only. Adding or removing a station never touches the others.
 - When the endpoint is unreachable or refuses, the running stations keep
@@ -24,9 +27,11 @@ station's playlist to its hidden /stations/<id>/autodj.<fmt> mounts (#62).
 import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import itertools
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import signal
@@ -44,7 +49,10 @@ PLAYOUT_USER = os.environ.get("PLAYOUT_USER", "")
 PLAYOUT_PASSWORD = os.environ.get("PLAYOUT_PASSWORD", "")
 ICECAST_HOST = os.environ.get("PLAYOUT_ICECAST_HOST", "icecast")
 ICECAST_PORT = int(os.environ.get("PLAYOUT_ICECAST_PORT", "8000"))
-POLL_SECONDS = float(os.environ.get("PLAYOUT_POLL_SECONDS", "30"))
+# 304 (ETag) while nothing changed, so a short poll costs the control plane
+# little; it is how soon a station enabled there goes on air (#86).
+POLL_SECONDS = float(os.environ.get("PLAYOUT_POLL_SECONDS", "3"))
+DOWNLOAD_WORKERS = int(os.environ.get("PLAYOUT_DOWNLOAD_WORKERS", "4"))
 MAX_TRACK_BYTES = int(os.environ.get("PLAYOUT_MAX_TRACK_MB", "200")) * 1024 * 1024
 CACHE_DIR = Path(os.environ.get("PLAYOUT_CACHE_DIR", "/var/cache/playout"))
 STATE_DIR = Path(os.environ.get("PLAYOUT_STATE_DIR", "/run/playout"))
@@ -69,7 +77,8 @@ def log(message):
     print(f"[playout] {message}", flush=True)
 
 
-# Counters for /metrics; written by the main loop only.
+# Counters for /metrics; written by the main loop and the download workers.
+STATS_LOCK = threading.Lock()
 STATS = {"track_failures": 0, "reconcile_failures": 0, "endpoint_up": 0, "last_sync": 0.0, "cache_bytes": 0}
 # Tracks failing now, by id and cache key: a track counts once per failure, not
 # once per poll it is retried on.
@@ -242,7 +251,8 @@ def download(track):
     key = (track["id"], track["cache_key"])
     path = cached(track["cache_key"])
     if path:
-        FAILING_TRACKS.discard(key)
+        with STATS_LOCK:
+            FAILING_TRACKS.discard(key)
         return path
     digest = hashlib.sha256()
     size = 0
@@ -264,23 +274,69 @@ def download(track):
                 raise RuntimeError("not an mp3, ogg, flac, wav or m4a file")
             path = CACHE_DIR / f"{track['cache_key']}.{extension}"
             os.replace(tmp.name, path)
-            FAILING_TRACKS.discard(key)
+            with STATS_LOCK:
+                FAILING_TRACKS.discard(key)
             return path
         except (OSError, RuntimeError, urllib.error.URLError) as error:
             # The presigned URL is a secret: name the track, never the URL.
             reason = error.reason if isinstance(error, urllib.error.URLError) else error
             log(f"track {track['id']}: download failed: {reason}")
-            if key not in FAILING_TRACKS:
-                FAILING_TRACKS.add(key)
-                STATS["track_failures"] += 1
+            with STATS_LOCK:
+                if key not in FAILING_TRACKS:
+                    FAILING_TRACKS.add(key)
+                    STATS["track_failures"] += 1
             Path(tmp.name).unlink(missing_ok=True)
             return None
 
 
 def evict(keep):
     for path in CACHE_DIR.iterdir():
-        if path.name.split(".")[0] not in keep:
+        # Dot files are downloads in progress.
+        if not path.name.startswith(".") and path.name.split(".")[0] not in keep:
             path.unlink(missing_ok=True)
+
+
+class Downloads:
+    """Background downloads, DOWNLOAD_WORKERS at once, in the order asked.
+    `ready` is set each time one ends, so the main loop renders playlists."""
+
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.pending = set()
+        self.lock = threading.Lock()
+        self.ready = threading.Event()
+        for _ in range(DOWNLOAD_WORKERS):
+            threading.Thread(target=self.work, daemon=True).start()
+
+    def want(self, tracks):
+        with self.lock:
+            for track in tracks:
+                if track["cache_key"] not in self.pending:
+                    self.pending.add(track["cache_key"])
+                    self.queue.put(track)
+
+    def busy(self, track):
+        with self.lock:
+            return track["cache_key"] in self.pending
+
+    def work(self):
+        while True:
+            track = self.queue.get()
+            try:
+                download(track)
+            except Exception as error:  # a worker must outlive any one track
+                log(f"track {track['id']}: download failed: {type(error).__name__}")
+            finally:
+                with self.lock:
+                    self.pending.discard(track["cache_key"])
+                self.ready.set()
+
+
+def by_rank(desired):
+    """Tracks not in the cache yet: every station's first, then every
+    station's second..., so each station goes on air as soon as it can."""
+    missing = [[t for t in station["tracks"] if not cached(t["cache_key"])] for _, station in sorted(desired.items())]
+    return [track for rank in itertools.zip_longest(*missing) for track in rank if track is not None]
 
 
 # --- Liquidsoap -----------------------------------------------------------
@@ -421,18 +477,29 @@ class Station:
 class Supervisor:
     def __init__(self):
         self.endpoint = Endpoint()
+        self.downloads = Downloads()
+        self.desired = {}
         self.stations = {}
         # Desired stations without any playable track, for /metrics.
         self.unplayable = set()
         self.stopping = False
 
     def reconcile(self, desired):
-        keep = set()
+        """A new desired state: download what is missing (in the background)
+        and play what is cached."""
+        self.desired = desired
+        self.downloads.want(by_rank(desired))
+        self.render()
+        evict({track["cache_key"] for station in desired.values() for track in station["tracks"]})
+
+    def render(self):
+        """Start, update or stop each station from the tracks in the cache."""
         unplayable = set()
-        for station_id, station in sorted(desired.items()):
-            paths = [(download(track), track) for track in station["tracks"]]
+        for station_id, station in sorted(self.desired.items()):
+            paths = [(cached(track["cache_key"]), track) for track in station["tracks"]]
             paths = [(path, track) for path, track in paths if path]
-            keep.update(path.name.split(".")[0] for path, _ in paths)
+            if not paths and any(self.downloads.busy(track) for track in station["tracks"]):
+                continue  # its first track is on the way
             if not paths:
                 # Nothing to play: no AutoDJ source, so the live mount has no
                 # fallback and listeners are not held on silence.
@@ -446,11 +513,10 @@ class Supervisor:
             if station_id not in self.stations:
                 self.stations[station_id] = Station(station_id)
             self.stations[station_id].apply(station, m3u(paths))
-        for station_id in sorted(set(self.stations) - set(desired)):
+        for station_id in sorted(set(self.stations) - set(self.desired)):
             log(f"station {station_id}: removed")
             self.remove(station_id)
         self.unplayable = unplayable
-        evict(keep)
 
     def remove(self, station_id):
         station = self.stations.pop(station_id)
@@ -499,11 +565,18 @@ class Supervisor:
                         STATS["reconcile_failures"] += 1
                         log(f"cannot apply the desired state, keeping {len(self.stations)} stations: {error}")
                 STATS["cache_bytes"] = cache_size()
+            if self.downloads.ready.is_set():
+                self.downloads.ready.clear()
+                try:
+                    self.render()
+                except OSError as error:
+                    log(f"cannot apply the downloaded tracks, keeping {len(self.stations)} stations: {error}")
             for station in list(self.stations.values()):
                 station.supervise()
                 station.check_stable()
             heartbeat()
-            time.sleep(TICK_SECONDS)
+            # Wakes early when a download ends: its station can start now.
+            self.downloads.ready.wait(TICK_SECONDS)
         for station in self.stations.values():
             station.stop()
         log("stopped")

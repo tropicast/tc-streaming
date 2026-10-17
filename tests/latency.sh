@@ -4,9 +4,10 @@
 # playout service, like tests/autodj.sh. Where autodj.sh checks that the
 # switches happen, this measures how late the listener hears them.
 #
-#   1. AutoDJ warm-up: the station gets a library of 30 tracks while the
-#      playout service runs with its default poll (30 s). Time to the
-#      supervisor's "started" and to the first AutoDJ byte on the live mount.
+#   1. AutoDJ warm-up: the station gets a library of 200 tracks while the
+#      playout service runs with its default poll. Time to the supervisor's
+#      "started" and to the first AutoDJ byte on the live mount. Then the
+#      playout service restarts with its cache warm: time to the first byte.
 #   2. A DJ on air for 35 s (MP3 128 kbps and Opus 64 kbps on one station),
 #      a listener per format from 12 s, AutoDJ for 10 s, the DJ again for
 #      15 s, AutoDJ to the end. latency.py turns the recordings into delays.
@@ -21,11 +22,13 @@ set -euo pipefail
 
 # Budgets, seconds (docs/reference/latency.md). With #85's bursts: delays and
 # switches 0.5-0.8 s, but Opus back to live 0.6-1.5 s (the DJ's reconnect
-# stall stays in the delay); a dead source 3-4 s; AutoDJ 25-27 s until #86.
-: "${LATENCY_MAX_AUTODJ_START:=45}"  # library published to first AutoDJ byte
+# stall stays in the delay, so after_return has 2 s); a dead source 3-4.5 s.
+: "${LATENCY_MAX_AUTODJ_START:=10}"   # library published to first AutoDJ byte
+: "${LATENCY_MAX_AUTODJ_RESTART:=5}"  # playout restarted, cache warm, to first AutoDJ byte
 : "${LATENCY_MAX_FIRST_AUDIO:=1}"    # listener start to the first complete frame
 : "${LATENCY_MAX_DELAY:=1.5}"        # microphone to ear, live, at connect and steady
 : "${LATENCY_MAX_SWITCH:=2}"         # DJ stops or starts to the listener hearing it
+: "${LATENCY_MAX_AFTER_RETURN:=2}"   # microphone to ear, after the DJ reconnects
 : "${LATENCY_MAX_DEAD_SOURCE:=5}"    # a DJ's connection dies to AutoDJ heard
 
 cd "$(dirname "$0")/.."
@@ -54,13 +57,20 @@ chmod 0755 "$work" "$stub" "$stub/tracks"
 secret=$(openssl rand -hex 16)
 playout_password=$(openssl rand -hex 24)
 
-# A library of 30 tracks of 10 s at 440 Hz: AutoDJ. Each one differs (its
-# length), as tracks of a real library do.
-for i in $(seq 1 30); do
-    ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=$((10 + i % 3))" \
-        -c:a libmp3lame -b:a 128k "$stub/tracks/t$i.mp3"
-done
-chmod 0644 "$stub/tracks"/*.mp3
+# A library of 200 tracks of 10 s at 440 Hz: AutoDJ. Each one differs (an
+# ID3v1 tag with its number), as tracks of a real library do, so the cache
+# keeps 200 files.
+ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=10" -c:a libmp3lame -b:a 128k "$work/tone.mp3"
+python3 - "$work/tone.mp3" "$stub/tracks" <<'PY'
+import sys
+from pathlib import Path
+tone, tracks = Path(sys.argv[1]).read_bytes(), Path(sys.argv[2])
+for i in range(1, 201):
+    tag = b"TAG" + f"Track {i}".encode().ljust(30, b"\0") + bytes(95)
+    path = tracks / f"t{i:03}.mp3"
+    path.write_bytes(tone + tag)
+    path.chmod(0o644)
+PY
 # No AutoDJ station at first: step 1 publishes the library.
 echo '{"stations": {}}' >"$stub/state.json"
 chmod 0644 "$stub/state.json"
@@ -180,6 +190,18 @@ if [[ -n $on_air ]]; then
 else
     budget autodj_start "" "$LATENCY_MAX_AUTODJ_START"
 fi
+# The playout service restarts (a deploy, a crash) with its cache warm.
+compose restart playout >/dev/null 2>&1
+restarted=$(now)
+back_on_air=
+for _ in $(seq 1 300); do
+    if [[ $(curl -sf -o /dev/null -m 1 -w '%{size_download}' --cacert "$ca" "${pin[@]}" "$listen/stations/42/live.mp3" || true) -gt 0 ]]; then
+        back_on_air=$(now)
+        break
+    fi
+    sleep 0.1
+done
+budget autodj_restart "$([[ -n $back_on_air ]] && elapsed "$restarted" "$back_on_air")" "$LATENCY_MAX_AUTODJ_RESTART"
 # AutoDJ must be on both mounts before step 2.
 for _ in $(seq 1 100); do
     [[ $(curl -sf -o /dev/null -m 1 -w '%{size_download}' --cacert "$ca" "${pin[@]}" "$listen/stations/42/live.opus" || true) -gt 0 ]] && break
@@ -250,7 +272,7 @@ for fmt in mp3 opus; do
     budget "$fmt steady" "$(field "$fmt" steady)" "$LATENCY_MAX_DELAY"
     budget "$fmt to_autodj" "$(field "$fmt" to_autodj)" "$LATENCY_MAX_SWITCH"
     budget "$fmt to_live" "$(field "$fmt" to_live)" "$LATENCY_MAX_SWITCH"
-    budget "$fmt after_return" "$(field "$fmt" after_return)" "$LATENCY_MAX_DELAY"
+    budget "$fmt after_return" "$(field "$fmt" after_return)" "$LATENCY_MAX_AFTER_RETURN"
     measured["$fmt wire_steady"]=$(field "$fmt" wire_steady)
 done
 
@@ -280,9 +302,10 @@ row "Microphone to ear, steady" steady "$LATENCY_MAX_DELAY"
 row "Microphone to listener, on the wire" wire_steady "-"
 row "Live to AutoDJ (DJ stops to AutoDJ heard)" to_autodj "$LATENCY_MAX_SWITCH"
 row "AutoDJ to live (DJ starts to DJ heard)" to_live "$LATENCY_MAX_SWITCH"
-row "Microphone to ear, after the DJ returns" after_return "$LATENCY_MAX_DELAY"
+row "Microphone to ear, after the DJ returns" after_return "$LATENCY_MAX_AFTER_RETURN"
 row "DJ's connection dies to AutoDJ heard" dead_source "$LATENCY_MAX_DEAD_SOURCE"
-echo "| AutoDJ warm-up (library published to first byte) | ${measured[autodj_start]:-} | | $LATENCY_MAX_AUTODJ_START |" >>"$summary"
+echo "| AutoDJ warm-up (200 tracks published to first byte) | ${measured[autodj_start]:-} | | $LATENCY_MAX_AUTODJ_START |" >>"$summary"
+echo "| AutoDJ restart, cache warm, to first byte | ${measured[autodj_restart]:-} | | $LATENCY_MAX_AUTODJ_RESTART |" >>"$summary"
 cat "$summary"
 [[ -n ${GITHUB_STEP_SUMMARY:-} ]] && { echo "### Latency (#84)"; cat "$summary"; } >>"$GITHUB_STEP_SUMMARY"
 

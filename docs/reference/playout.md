@@ -64,9 +64,16 @@ to Icecast on the internal Docker network and to the control plane.
 
 ## Supervisor
 
-- Polls `PLAYOUT_URL` every `PLAYOUT_POLL_SECONDS` (30) with `If-None-Match`;
-  an unchanged state (`304`) costs nothing.
-- Downloads each track once into the cache, named by its sha256. A track
+- Polls `PLAYOUT_URL` every `PLAYOUT_POLL_SECONDS` (3) with `If-None-Match`;
+  an unchanged state (`304`) costs nothing. The interval is how soon a station
+  enabled in the control plane goes on air (#86).
+- Downloads each track once into the cache, named by its sha256, in the
+  background: `PLAYOUT_DOWNLOAD_WORKERS` (4) at once, every station's first
+  track first, then every station's second, and so on. A station starts as
+  soon as one of its tracks is in the cache; the others join its playlist as
+  they arrive, without a restart. Measured by `tests/latency.sh`: 200 tracks
+  published to the first AutoDJ byte in a few seconds, and a restart with a
+  warm cache in about 3 s ([Latency](latency.md)). A track
   whose size is above `PLAYOUT_MAX_TRACK_MB` (200), whose sha256 does not
   match, or whose content is not MP3, Ogg, FLAC, WAV or M4A is skipped and
   logged. The type comes from the file's content, never from the URL.
@@ -199,7 +206,8 @@ credentials. Body at most 8 MiB:
 | `PLAYOUT_URL` | none | Control plane endpoint, `http(s)://`, no credentials in it; tc-dashboard: `http://<private ip>:8081/internal/playout/stations` |
 | `PLAYOUT_USER` | `ICECAST_SOURCE_AUTH_USER` (deploy workflow) | Node user for the endpoint |
 | `PLAYOUT_PASSWORD` | `ICECAST_SOURCE_AUTH_PASSWORD` (deploy workflow) | Node password for the endpoint (secret) |
-| `PLAYOUT_POLL_SECONDS` | `30` | Poll interval |
+| `PLAYOUT_POLL_SECONDS` | `3` | Poll interval |
+| `PLAYOUT_DOWNLOAD_WORKERS` | `4` | Track downloads at once |
 | `PLAYOUT_MAX_TRACK_MB` | `200` | Largest track accepted |
 | `PLAYOUT_ICECAST_HOST`, `PLAYOUT_ICECAST_PORT` | `icecast`, `8000` | Icecast on the internal network |
 | `PLAYOUT_CPUS`, `PLAYOUT_MEMORY` | `1.5`, `2g` | Compose limits of the service (deploy variables) |

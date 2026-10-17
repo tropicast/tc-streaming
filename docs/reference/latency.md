@@ -8,7 +8,8 @@ budgets that fail the job.
 ## Measured
 
 With #85's bursts (0.5 s at a 128 kbps cap: 8,000 bytes for MP3, 6,000 for
-Opus) and the desktop app's 100 ms Ogg pages (tc-station#74), two local runs:
+Opus), the desktop app's 100 ms Ogg pages (tc-station#74) and #86's AutoDJ
+start, local runs:
 
 | Delay (s) | MP3 128 kbps | Opus 64 kbps | Budget |
 |---|---|---|---|
@@ -16,10 +17,16 @@ Opus) and the desktop app's 100 ms Ogg pages (tc-station#74), two local runs:
 | Microphone to ear, at connect and steady | 0.6–0.7 | 0.5–0.6 | 1.5 |
 | Microphone to listener, on the wire | 0.25 | 0.15 | - |
 | Live to AutoDJ (DJ stops to AutoDJ heard) | 0.7–0.8 | 0.5–0.6 | 2 |
-| AutoDJ to live (DJ starts to DJ heard) | 0.6–0.7 | 0.6–1.5 | 2 |
-| Microphone to ear, after the DJ returns | 0.5–0.6 | 0.5–1.4 | 1.5 |
-| DJ's connection dies to AutoDJ heard | 3.8 | 4.0 | 5 |
-| AutoDJ warm-up (library published to first byte) | 25 | | 45 |
+| AutoDJ to live (DJ starts to DJ heard) | 0.6–0.8 | 0.6–1.7 | 2 |
+| Microphone to ear, after the DJ returns | 0.4–0.6 | 0.5–1.6 | 2 |
+| DJ's connection dies to AutoDJ heard | 3.7–4.0 | 3.8–4.5 | 5 |
+| AutoDJ warm-up (200 tracks published to first byte) | 4.7–8.7 | | 10 |
+| AutoDJ restart, cache warm, to first byte | 2.7–6.6 | | 5 |
+
+AutoDJ (#86): the playout service polls every 3 s, starts a station as soon
+as one of its tracks is cached, and downloads the rest in the background.
+What is left is mostly Liquidsoap's own start (2.5 s before its first log
+line, then the connection to Icecast), which varies with the machine's load.
 
 Back to live on Opus varies: the DJ's connect (TLS, source auth, a new
 chained Ogg stream) can leave the listener without audio for up to a second,
@@ -45,9 +52,9 @@ Budgets leave 1–3 s for slower CI runners. On Opus, a stall while the DJ
 reconnects stays in the delay for the rest of the session: a player with no
 buffer never catches up.
 
-AutoDJ warm-up: 22.6 s from publishing a 30-track library to the
-supervisor's `station 42: started` (mostly its 30 s poll), then 4.2 s to
-the first byte on the mount.
+AutoDJ warm-up then: 22.6 s from publishing a 30-track library to the
+supervisor's `station 42: started` (mostly its 30 s poll, and every track
+downloaded first), then 4.2 s to the first byte on the mount.
 
 What it shows:
 
@@ -86,10 +93,11 @@ What it shows:
 - **Dead source.** The source stops sending after 10 s but keeps its
   connection open, as a DJ whose uplink died. The delay runs from the last
   audio it sent to the first AutoDJ audio heard.
-- **Warm-up.** The playout service runs with its default poll (30 s). The
-  test publishes a station with 30 tracks to the stub control plane, then
-  waits for the first byte on the live mount, which is served by the AutoDJ
-  fallback.
+- **Warm-up.** The playout service runs with its default poll. The test
+  publishes a station with 200 tracks to the stub control plane, then waits
+  for the first byte on the live mount, which is served by the AutoDJ
+  fallback. Then it restarts the playout service, cache warm, and waits
+  again.
 
 Run it with `tests/latency.sh` (about 90 s). `KEEP=1` keeps the Compose
 project and the recordings. The `LATENCY_MAX_*` variables override the
