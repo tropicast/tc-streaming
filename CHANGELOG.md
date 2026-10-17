@@ -11,6 +11,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Changed
 
+- AutoDJ goes on air within seconds (#86): the playout service polls every 3 s instead of 30 s (`304` while nothing changed), and starts a station as soon as one of its tracks is cached. It downloads the others in the background, `PLAYOUT_DOWNLOAD_WORKERS` (4) at once, every station's first track first. 200 tracks published to the first AutoDJ byte: 27 s before, 5–9 s now (most of it Liquidsoap's start).
 - Listeners hear the station about 0.6 s behind the source instead of 4.3 s (MP3) and 5.5 s (Opus), and a switch between live and AutoDJ within 0.5–1.5 s instead of 4–7 s (#85). Each station mount's start-up burst is 0.5 s at its `max_bitrate_kbps` (at least 4 KiB) instead of a global 64 KiB; the global default is 8 KiB. Players that buffer before playing wait that long at start. Deploying it restarts Icecast (a new image): listeners and sources reconnect.
 - `<source-timeout>` is 3 s instead of 10 s: when a DJ's connection dies without closing, listeners get AutoDJ in about 4 s. `tests/latency.sh` checks it.
 - `stations.json`: `max_bitrate_kbps` must be an integer from 8 to 640 when present.
