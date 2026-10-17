@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -18,6 +19,14 @@ FORMATS = ("mp3", "opus")
 # Icecast 2.5 ignores a <max-listeners> outside 1..16384 (cfgfile.c,
 # CONFIG_MAX_LISTENERS) and only logs "Value for tag is out of range".
 MAX_LISTENERS = 16384
+# Start-up burst per station mount (#85): this much audio at the station's
+# bitrate cap. A listener stays one burst behind the source for the whole
+# session, and plays it out first on a live/AutoDJ switch, so it is delay.
+# Opus is sized at no more than 96 kbps (the desktop app's highest), the floor
+# keeps a few frames for a player to sync on.
+BURST_SECONDS = 0.5
+BURST_FLOOR = 4096
+OPUS_BURST_KBPS = 96
 # Directory metadata (tc-dashboard#13): mount settings, and the "icy" v2 headers
 # directories such as RadioBrowser read from the stream to refresh a listing.
 DIRECTORY_TEXT = {"name": 400, "description": 512, "genre": 256}
@@ -103,6 +112,9 @@ def load_stations():
             check_directory(station_id, limits["directory"])
         if not isinstance(limits.get("autodj", False), bool):
             sys.exit(f"{STATIONS_FILE}: station {station_id} autodj must be true or false")
+        kbps = limits.get("max_bitrate_kbps")
+        if kbps is not None and (isinstance(kbps, bool) or not isinstance(kbps, int) or not 8 <= kbps <= 640):
+            sys.exit(f"{STATIONS_FILE}: station {station_id} max_bitrate_kbps must be an integer from 8 to 640")
     return {"default": default, "stations": stations}
 
 
@@ -174,6 +186,16 @@ def directory_settings(mount, directory):
         ET.SubElement(http_headers, "header", {"name": name, "value": value})
 
 
+def burst_size(limits, fmt):
+    """Bytes of BURST_SECONDS at the station's cap; None: the global one."""
+    kbps = limits.get("max_bitrate_kbps")
+    if kbps is None:
+        return None
+    if fmt == "opus":
+        kbps = min(kbps, OPUS_BURST_KBPS)
+    return max(BURST_FLOOR, math.ceil(BURST_SECONDS * kbps * 1000 / 8))
+
+
 def apply_station_limits(tree, stations):
     """Rewrite the per-station <mount type="normal"> blocks.
 
@@ -186,6 +208,8 @@ def apply_station_limits(tree, stations):
     source drops, Icecast moves its listeners there (fallback-mount); when it
     comes back, it takes them back (fallback-override "all": only the live
     mount sends listeners to the AutoDJ mount, so all of them are its own).
+
+    Both mounts get a burst sized from the station's bitrate cap (#85).
     """
     root = tree.getroot()
     default_mount = root.find("./mount[@type='default']")
@@ -209,6 +233,9 @@ def apply_station_limits(tree, stations):
             mount = ET.Element("mount", {"type": "normal"})
             ET.SubElement(mount, "mount-name").text = f"/stations/{station_id}/live.{fmt}"
             ET.SubElement(mount, "max-listeners").text = str(limits["max_listeners"])
+            burst = burst_size(limits, fmt)
+            if burst is not None:
+                ET.SubElement(mount, "burst-size").text = str(burst)
             if limits.get("autodj"):
                 ET.SubElement(mount, "fallback-mount").text = f"/stations/{station_id}/autodj.{fmt}"
                 ET.SubElement(mount, "fallback-override").text = "all"
@@ -223,6 +250,8 @@ def apply_station_limits(tree, stations):
                 mount = ET.Element("mount", {"type": "normal"})
                 ET.SubElement(mount, "mount-name").text = f"/stations/{station_id}/autodj.{fmt}"
                 ET.SubElement(mount, "max-listeners").text = str(limits["max_listeners"])
+                if burst is not None:
+                    ET.SubElement(mount, "burst-size").text = str(burst)
                 ET.SubElement(mount, "hidden").text = "1"
                 mount.append(copy.deepcopy(auth))
                 root.insert(position, mount)

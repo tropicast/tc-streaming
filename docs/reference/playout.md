@@ -22,6 +22,8 @@ per format, a DJ who drops, comes back and drops again.
 | AutoDJ to live: longest time without new bytes | 0.2 s | 2.8 s |
 | Listener reconnects | none | none |
 
+- How late the listener hears a switch (the backlog they play first) is in
+  [Latency](latency.md): `tests/latency.sh` (#84).
 - The stall is measured from the moment the DJ's source stops (or its client
   starts again), on the wire, so a player with a few seconds of buffer plays
   on without a gap. Back to live includes the DJ's own connect time (TLS,

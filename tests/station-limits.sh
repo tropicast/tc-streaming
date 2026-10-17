@@ -40,7 +40,8 @@ write_limits() {
                                    "logo": "https://radio42.example/logo.png",
                                    "main_stream_url": "https://listen.example/stations/42/live.mp3"}},
               "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}},
-              "55": {"plan": "pro", "max_listeners": 25000, "formats": ["mp3", "opus"], "autodj": ${2:-true}}}}
+              "55": {"plan": "pro", "max_listeners": 25000, "max_bitrate_kbps": 320, "formats": ["mp3", "opus"],
+                     "autodj": ${2:-true}}}}
 JSON
 }
 write_limits 2
@@ -156,6 +157,13 @@ mount_setting() {
 r = ET.parse("/run/icecast/icecast.xml").getroot()
 print(" ".join(m.findtext(sys.argv[2]) or "-" for m in r.findall("mount") if m.findtext("mount-name") == sys.argv[1]))' "$1" "$2"
 }
+# Burst (#85): 0.5 s at the station's bitrate cap, Opus at no more than
+# 96 kbps, at least 4 KiB; no cap, no per-mount burst (the global 8 KiB).
+check "burst: 0.5 s of the 64 kbps cap, raised to the 4 KiB floor" 4096 "$(mount_setting /stations/42/live.mp3 burst-size)"
+check "burst: 0.5 s of the 320 kbps cap (mp3)" 20000 "$(mount_setting /stations/55/live.mp3 burst-size)"
+check "burst: Opus sized at 96 kbps" 6000 "$(mount_setting /stations/55/live.opus burst-size)"
+check "burst: the AutoDJ mount has the live mount's" 20000 "$(mount_setting /stations/55/autodj.mp3 burst-size)"
+check "burst: none per mount without a cap" - "$(mount_setting /stations/99/live.mp3 burst-size)"
 check "AutoDJ: live mp3 falls back to autodj.mp3" /stations/55/autodj.mp3 "$(mount_setting /stations/55/live.mp3 fallback-mount)"
 check "AutoDJ: live opus falls back to autodj.opus" /stations/55/autodj.opus "$(mount_setting /stations/55/live.opus fallback-mount)"
 check "AutoDJ: listeners return to live" all "$(mount_setting /stations/55/live.mp3 fallback-override)"
