@@ -232,7 +232,8 @@ echo "|---|---|---|---|" >>"$summary"
 declare -A result
 for fmt in mp3 opus; do
     result[$fmt]=$(python3 tests/latency.py "$work/$fmt" "$fmt" \
-        --session "$(cat "$work/$fmt.t0.1"):35" --session "$(cat "$work/$fmt.t0.2"):15")
+        --session "$(cat "$work/$fmt.t0.1"):35" --session "$(cat "$work/$fmt.t0.2"):15") ||
+        { echo "FAIL - $fmt: tests/latency.py failed, nothing measured"; result[$fmt]='{}'; }
     echo "info - $fmt: ${result[$fmt]}"
 done
 field() { python3 -c 'import json, sys; print(json.loads(sys.argv[1]).get(sys.argv[2]))' "${result[$1]}" "$2"; }

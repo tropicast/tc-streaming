@@ -39,22 +39,37 @@ WINDOW = RATE // 20  # 50 ms
 AUTODJ_HZ = 440
 
 
+def mp3_header(data, i):
+    """(size, seconds of audio) of the MPEG-1/2 Layer III frame header at i, or None."""
+    b1, b2 = data[i + 1], data[i + 2]
+    version, layer = (b1 >> 3) & 3, (b1 >> 1) & 3
+    bitrate_index, rate_index = b2 >> 4, (b2 >> 2) & 3
+    if (data[i] != 0xFF or b1 & 0xE0 != 0xE0 or version not in (2, 3) or layer != 1
+            or bitrate_index in (0, 15) or rate_index == 3):
+        return None
+    kbps, rate = BITRATES[version][bitrate_index], RATES[version][rate_index]
+    size = (144 if version == 3 else 72) * kbps * 1000 // rate + ((b2 >> 1) & 1)
+    return size, (1152 if version == 3 else 576) / rate
+
+
 def mp3_frames(data):
-    """(end offset, seconds of audio) of each MPEG-1/2 Layer III frame."""
+    """(end offset, seconds of audio) of each MPEG-1/2 Layer III frame. A
+    header only counts when another one follows it (or the data ends), so
+    bytes inside a frame cut by a switch or by the join are not taken for
+    a frame."""
     i = 0
     while i + 4 <= len(data):
-        b1, b2 = data[i + 1], data[i + 2]
-        version, layer = (b1 >> 3) & 3, (b1 >> 1) & 3
-        bitrate_index, rate_index = b2 >> 4, (b2 >> 2) & 3
-        if (data[i] != 0xFF or b1 & 0xE0 != 0xE0 or version not in (2, 3) or layer != 1
-                or bitrate_index in (0, 15) or rate_index == 3):
+        frame = mp3_header(data, i)
+        if frame is None:
             i += 1
             continue
-        kbps, rate = BITRATES[version][bitrate_index], RATES[version][rate_index]
-        size = (144 if version == 3 else 72) * kbps * 1000 // rate + ((b2 >> 1) & 1)
+        size, seconds = frame
         if i + size > len(data):
             return
-        yield i + size, (1152 if version == 3 else 576) / rate
+        if i + size + 4 <= len(data) and mp3_header(data, i + size) is None:
+            i += 1
+            continue
+        yield i + size, seconds
         i += size
 
 
@@ -78,7 +93,7 @@ def ogg_pages(data):
     the packets that end on it. Granule positions are not used: a listener
     who joins mid-stream, or a switch to a chained stream, would make them
     jump."""
-    i, packet = 0, b""
+    i, packet = 0, None
     while (i := data.find(b"OggS", i)) >= 0 and i + 27 <= len(data):
         segments = data[i + 26]
         lacing = data[i + 27:i + 27 + segments]
@@ -87,12 +102,16 @@ def ogg_pages(data):
             return
         if not data[i + 5] & 1:
             packet = b""  # not a continuation: drop a packet cut by a switch
+        elif not packet:
+            packet = None  # continues a packet whose start never arrived: drop it
         seconds, offset = 0.0, i + 27 + segments
         for value in lacing:
-            packet += data[offset:offset + value]
+            if packet is not None:
+                packet += data[offset:offset + value]
             offset += value
             if value < 255:
-                seconds += opus_seconds(packet)
+                if packet is not None:
+                    seconds += opus_seconds(packet)
                 packet = b""
         yield i + size, seconds
         i += size
