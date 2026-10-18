@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - infra/terraform/**
+      - infra/loadgen/**
       - .github/workflows/terraform.yml
   push:
     branches: [main]
     paths:
       - infra/terraform/**
+      - infra/loadgen/**
 
 permissions:
   contents: read
@@ -23,9 +25,13 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The streaming node, and the load generator of the load tests (#96).
+        dir: [infra/terraform, infra/loadgen]
     defaults:
       run:
-        working-directory: infra/terraform
+        working-directory: ${{ matrix.dir }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
