@@ -315,6 +315,22 @@ Steps, with the release that contains #85 deployed on the node:
    lowered to 16,384 on the node). Not with `deploy.sh apply-stations`:
    tc-dashboard pushes `stations.json` again within seconds and would undo
    it, and that command replaces the whole file.
+   The burst follows the plan's bitrate cap (#85: 0.5 s at the cap, Opus
+   counted at no more than 96 kbps, at least 4 KiB), so the plan changes
+   what the test measures:
+
+   | Plan (bitrate cap) | MP3 128 kbps burst | Opus 64 kbps burst |
+   |---|---|---|
+   | Free (64) | can't publish 128 kbps MP3 (4,096 B: 0.5 s at 64 kbps) | 4,096 B = 0.5 s |
+   | Starter (128) | 8,000 B = 0.5 s | 6,000 B = 0.75 s |
+   | Growth (192) | 12,000 B = 0.75 s | 6,000 B = 0.75 s |
+   | Pro (320) | 20,000 B = 1.25 s | 6,000 B = 0.75 s |
+
+   On Pro, judge stalls on the **Opus** stream: its burst is the one Starter
+   and Growth stations get. The MP3 stream starts with 2.5 times a Starter
+   station's burst, so its stall count is optimistic; it still checks drops,
+   CPU and egress. For a Starter-like MP3 figure, run a shorter second pass
+   with the station on Starter (500 listeners: about 250 MP3 for an hour).
 2. Create the load generator, `tc-loadgen-1`, with `infra/loadgen`
    ([Load generator](reference/infrastructure.md#load-generator-terraform)):
    `terraform apply`, then `ssh root@<ipv4> cloud-init status --wait`. It has
