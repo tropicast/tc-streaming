@@ -310,9 +310,33 @@ Pass when, compared with the 2026-10-06 run above:
 
 Steps, with the release that contains #85 deployed on the node:
 
-1. Raise station 42's cap to 1,500 with `deploy.sh apply-stations` (no
-   restart), as in #12.
-2. Publish the two sources from `tc-runner-1`, with the desktop app's
+1. Raise the test station's listener cap to 1,500 or more through the
+   control plane: put it on a plan whose cap covers the test (Pro: 25,000,
+   lowered to 16,384 on the node). Not with `deploy.sh apply-stations`:
+   tc-dashboard pushes `stations.json` again within seconds and would undo
+   it, and that command replaces the whole file.
+   The burst follows the plan's bitrate cap (#85: 0.5 s at the cap, Opus
+   counted at no more than 96 kbps, at least 4 KiB), so the plan changes
+   what the test measures:
+
+   | Plan (bitrate cap) | MP3 128 kbps burst | Opus 64 kbps burst |
+   |---|---|---|
+   | Free (64) | can't publish 128 kbps MP3 (4,096 B: 0.5 s at 64 kbps) | 4,096 B = 0.5 s |
+   | Starter (128) | 8,000 B = 0.5 s | 6,000 B = 0.75 s |
+   | Growth (192) | 12,000 B = 0.75 s | 6,000 B = 0.75 s |
+   | Pro (320) | 20,000 B = 1.25 s | 6,000 B = 0.75 s |
+
+   On Pro, judge stalls on the **Opus** stream: its burst is the one Starter
+   and Growth stations get. The MP3 stream starts with 2.5 times a Starter
+   station's burst, so its stall count is optimistic; it still checks drops,
+   CPU and egress. For a Starter-like MP3 figure, run a shorter second pass
+   with the station on Starter (500 listeners: about 250 MP3 for an hour).
+2. Create the load generator, `tc-loadgen-1`, with `infra/loadgen`
+   ([Load generator](reference/infrastructure.md#load-generator-terraform)):
+   `terraform apply`, then `ssh root@<ipv4> cloud-init status --wait`. It has
+   ffmpeg, tmux and `loadtest` installed. `tc-runner-1`, used for #12, no
+   longer exists.
+3. Publish the two sources from it, inside `tmux`, with the desktop app's
    encoder flags (tc-station `FfmpegExecutable.Arguments`):
 
    ```sh
@@ -326,16 +350,19 @@ Steps, with the release that contains #85 deployed on the node:
      "icecast://42:<password>@ingest.tropicastradio.com:443/stations/42/live.opus" &
    ```
 
-3. Sample the node (10 s for the ramp test, 60 s for the soak):
+4. Sample the node (10 s for the ramp test, 60 s for the soak), from your
+   machine:
    `ssh ops@<node> 'bash -s 10' < tests/load/sample-node.sh > node-ramp.csv`.
-4. Ramp test, from `tc-runner-1` (`go build ./tools/loadtest`):
+5. Ramp test, from the load generator:
 
    ```sh
-   ./loadtest -url https://listen.tropicastradio.com/stations/42/live.opus -listeners 700 \
+   loadtest -url https://listen.tropicastradio.com/stations/42/live.opus -listeners 700 \
               -url https://listen.tropicastradio.com/stations/42/live.mp3 -listeners 700 \
               -ramp 5m -hold 10m | tee ramp.txt
    ```
 
-5. Soak: the same with `-listeners 150` each, `-ramp 2m -hold 24h -every 5m`,
-   under `nohup` or `tmux`, and the node sampled every 60 s.
-6. Restore station 42's cap, stop the sources, and add the results here.
+6. Soak: the same with `-listeners 150` each, `-ramp 2m -hold 24h -every 5m`,
+   under `tmux`, and the node sampled every 60 s.
+7. Put the test station back on its plan, stop the sources, copy the results off the load
+   generator (`scp root@<ipv4>:ramp.txt .`), `terraform destroy` it, and add
+   the results here.

@@ -36,6 +36,26 @@ To provision from GitHub Actions instead, follow
 protection must be turned off in `main.tf` before `terraform destroy` can
 remove the server or IPs.
 
+## Load generator (Terraform)
+
+`infra/loadgen` creates a throwaway server for the load and soak tests
+(#96, [docs/load-test.md](../load-test.md#re-test-after-the-latency-changes-83)):
+a CX33 in the node's location, SSH from `admin_cidrs` only, and nothing else
+inbound. cloud-init installs ffmpeg, Go and tmux, clones this repository to
+`/opt/tc-streaming` and builds `/usr/local/bin/loadtest`. Its state is local
+and separate from the node's. It is billed by the hour while it exists
+(about $0.02/h for a CX33), so destroy it when the test ends.
+
+```sh
+cd infra/loadgen
+cp terraform.tfvars.example terraform.tfvars  # keys, admin CIDRs
+export HCLOUD_TOKEN=...
+terraform init
+terraform apply                               # prints the ssh command
+ssh root@<ipv4> cloud-init status --wait      # ready when it says "done"
+terraform destroy                             # after the test
+```
+
 ## Node hardening (Ansible)
 
 `infra/ansible/site.yml` prepares a node created by Terraform (issue #4):
