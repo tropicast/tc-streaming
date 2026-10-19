@@ -8,17 +8,17 @@ budgets that fail the job.
 ## Measured
 
 With #85's bursts (0.5 s at a 128 kbps cap: 8,000 bytes for MP3, 6,000 for
-Opus), the desktop app's 100 ms Ogg pages (tc-station#74) and #86's AutoDJ
-start, local runs:
+Opus), 100 ms Ogg pages on the desktop app's Opus (tc-station#74) and on
+AutoDJ's (#93), and #86's AutoDJ start, local runs:
 
 | Delay (s) | MP3 128 kbps | Opus 64 kbps | Budget |
 |---|---|---|---|
 | Listener start to first audio | 0.2–0.3 | 0.3–0.4 | 1 |
 | Microphone to ear, at connect and steady | 0.6–0.7 | 0.5–0.6 | 1.5 |
 | Microphone to listener, on the wire | 0.25 | 0.15 | - |
-| Live to AutoDJ (DJ stops to AutoDJ heard) | 0.7–0.8 | 0.5–0.6 | 2 |
-| AutoDJ to live (DJ starts to DJ heard) | 0.6–0.8 | 0.6–1.7 | 2 |
-| Microphone to ear, after the DJ returns | 0.4–0.6 | 0.5–1.6 | 2 |
+| Live to AutoDJ (DJ stops to AutoDJ heard) | 0.7–0.8 | 0.5–0.6 | 1.5 |
+| AutoDJ to live (DJ presses Go Live to DJ heard) | 0.6–0.8 | 0.5–0.7 | 1.5 |
+| Microphone to ear, after the DJ returns | 0.3–0.5 | 0.3 | 1.5 |
 | DJ's connection dies to AutoDJ heard | 3.7–4.0 | 3.8–4.5 | 5 |
 | AutoDJ warm-up (200 tracks published to first byte) | 4.7–8.7 | | 10 |
 | AutoDJ restart, cache warm, to first byte | 2.7–6.6 | | 5 |
@@ -28,10 +28,16 @@ as one of its tracks is cached, and downloads the rest in the background.
 What is left is mostly Liquidsoap's own start (2.5 s before its first log
 line, then the connection to Icecast), which varies with the machine's load.
 
-Back to live on Opus varies: the DJ's connect (TLS, source auth, a new
-chained Ogg stream) can leave the listener without audio for up to a second,
-and a player with no buffer keeps that delay for the rest of the session. A
-dead source is Icecast's `<source-timeout>` (3 s) plus the steady delay.
+Back to live on Opus took 0.6–1.7 s until #93. The cause was AutoDJ's Ogg
+pages: Liquidsoap's muxer filled about 10 KB (1.25 s at 64 kbps) per page, and
+a listener moved back to live first plays out the AutoDJ page they hold. With
+100 ms pages, as the desktop app's, it is as quick as MP3. A dead source is
+Icecast's `<source-timeout>` (3 s) plus the steady delay.
+
+The test's DJ works like the desktop app (#93): it records when Go Live is
+pressed, and captures no audio until Icecast accepts the source, so nothing
+captured during TLS and source auth reaches listeners late. "AutoDJ to live"
+counts from the press, connect time included.
 
 ### Before #83
 

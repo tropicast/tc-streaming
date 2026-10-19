@@ -72,7 +72,7 @@ jobs:
           printf '%s\n' \
             'output.dummy(fallible=true, single("/dev/null"))' \
             'output.file(%ffmpeg(format="mp3", %audio(codec="libmp3lame", b="128k", ar=44100, ac=1)), "/tmp/a.mp3", mean(sine()))' \
-            'output.file(%ffmpeg(format="ogg", %audio(codec="libopus", b="64k", ar=48000, ac=2)), "/tmp/a.ogg", sine())' |
+            'output.file(%ffmpeg(format="ogg", page_duration=100000, %audio(codec="libopus", b="64k", ar=48000, ac=2)), "/tmp/a.ogg", sine())' |
             docker run --rm -i --entrypoint sh "$image" -c 'cat > /tmp/t.liq && liquidsoap --check /tmp/t.liq'
 
       # Reuse the vulnerability DB for a day instead of downloading it each run.
