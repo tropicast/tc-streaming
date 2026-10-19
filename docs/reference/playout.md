@@ -59,8 +59,11 @@ half the CPU weight of the other containers (`cpu_shares: 512`, cgroup v2
 first; about 8 stations fit per node
 ([load test](../load-test.md#autodj-playout)).
 Outputs use FFmpeg's libmp3lame and libopus (`%ffmpeg`), half the CPU of
-Liquidsoap's native encoders. It has no published port: it only connects out,
-to Icecast on the internal Docker network and to the control plane.
+Liquidsoap's native encoders. Opus leaves in 100 ms Ogg pages
+(`page_duration=100000`), as the desktop app's: with the muxer's default of
+about 1.25 s, a listener moved back to live first played out that much AutoDJ
+audio ([latency](latency.md), #93). It has no published port: it only connects
+out, to Icecast on the internal Docker network and to the control plane.
 
 ## Supervisor
 

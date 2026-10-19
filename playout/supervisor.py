@@ -348,10 +348,17 @@ def liq_string(value):
 
 def encoder(output):
     """FFmpeg's libmp3lame and libopus: half the CPU of Liquidsoap's native
-    %mp3 and %ogg(%opus), mostly its resampler on the 48 kHz Opus path (#65)."""
+    %mp3 and %ogg(%opus), mostly its resampler on the 48 kHz Opus path (#65).
+
+    Ogg pages of 100 ms, as the desktop app's (tc-station#74): the muxer's
+    default fills about 10 KB (1.25 s at 64 kbps) before a page leaves. A
+    listener moved back to live first plays out the AutoDJ page they hold, so
+    that page's length was added to every switch to live, for the rest of the
+    session (#93)."""
     fmt, rate, channels, kbps = output["format"], output["sample_rate"], output["channels"], output["bitrate_kbps"]
-    container, codec = ("mp3", "libmp3lame") if fmt == "mp3" else ("ogg", "libopus")
-    return f'%ffmpeg(format="{container}", %audio(codec="{codec}", b="{kbps}k", ar={rate}, ac={channels}))'
+    if fmt == "mp3":
+        return f'%ffmpeg(format="mp3", %audio(codec="libmp3lame", b="{kbps}k", ar={rate}, ac={channels}))'
+    return f'%ffmpeg(format="ogg", page_duration=100000, %audio(codec="libopus", b="{kbps}k", ar={rate}, ac={channels}))'
 
 
 def script(station_id, station, playlist):

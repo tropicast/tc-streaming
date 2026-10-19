@@ -9,6 +9,10 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Fixed
+
+- Back to live on Opus took up to 1.7 s, and listeners stayed that far behind the DJ (#93): AutoDJ sent Ogg pages of about 1.25 s, and a listener plays out the page they hold before the live audio. AutoDJ's Opus now leaves in 100 ms pages, as the desktop app's: 0.5–0.7 s, as quick as MP3. Deploying it restarts the AutoDJ sources. `tests/latency.sh` budgets for switches are back to 1.5 s, and its DJ captures audio only once Icecast accepts it, as the app does.
+
 ### Added
 
 - Load and soak re-test after #83 (#94): 1,400 listeners and 300 for 24 h, no drops or stalls; CPU about 60 % higher per listener, likely the 100 ms Ogg pages ([load test](docs/load-test.md#results-2026-10-1819)).

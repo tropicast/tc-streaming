@@ -17,11 +17,14 @@ Prints one JSON object, all values in seconds:
   steady            heard delay at the end of the first session
   wire_steady       the same, on the wire
   to_autodj         end of the first session to the first AutoDJ audio heard
-  to_live           start of the second session to its first audio heard
+  to_live           the second session's start (or its Go Live press) to its first audio heard
   after_return      heard delay at the end of the second session
   timeline          "L A L A": live, AutoDJ, live, AutoDJ
 
-    python3 latency.py RECORDING mp3|opus --session T0:SECONDS --session T0:SECONDS
+    python3 latency.py RECORDING mp3|opus --session T0:SECONDS[:PRESSED] --session T0:SECONDS[:PRESSED]
+
+T0 is when the session's first sample left the microphone; PRESSED, when the DJ pressed Go Live (before the
+connection was accepted). Switches to live are measured from PRESSED when given.
 """
 
 import argparse
@@ -202,9 +205,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("recording")
     parser.add_argument("format", choices=["mp3", "opus"])
-    parser.add_argument("--session", action="append", required=True, help="T0:SECONDS of a live session, in order")
+    parser.add_argument("--session", action="append", required=True, help="T0:SECONDS[:PRESSED] of a live session, in order")
     args = parser.parse_args()
-    sessions = [(float(t0), int(length)) for t0, length in (s.split(":") for s in args.session)]
+    parsed = [s.split(":") for s in args.session]
+    sessions = [(float(fields[0]), int(fields[1])) for fields in parsed]
+    pressed = [float(fields[2]) if len(fields) > 2 else float(fields[0]) for fields in parsed]
 
     with open(args.recording, "rb") as handle:
         data = handle.read()
@@ -243,7 +248,7 @@ def main():
         t0, length = sessions[0]
         result["to_autodj"] = player.heard(at(autodj[0][0][1])) - (t0 + length)
     if len(live) > 1 and len(sessions) > 1:
-        result["to_live"] = player.heard(at(live[1][0][1])) - sessions[1][0]
+        result["to_live"] = player.heard(at(live[1][0][1])) - pressed[1]
         second = delays(live[1], player, *sessions[1])
         if second:
             result["after_return"] = statistics.median(d for d, _ in second[-3:])

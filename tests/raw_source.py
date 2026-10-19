@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--plain", action="store_true", help="no TLS (straight to Icecast)")
     parser.add_argument("--bitrate", type=int, help="send Ice-Bitrate with this value")
     parser.add_argument("--content-type", default="audio/mpeg", help="e.g. audio/ogg for Opus")
+    parser.add_argument("--ready", help="create this file once Icecast accepts the source")
     args = parser.parse_args()
 
     raw = socket.create_connection((args.connect or args.host, args.port), timeout=10)
@@ -55,6 +56,8 @@ def main():
     print(code, flush=True)
     if code not in ("100", "200"):
         return
+    if args.ready:
+        open(args.ready, "w").close()
     conn.settimeout(None)
     try:
         # read1: send what the encoder has written, without waiting for 4 KiB

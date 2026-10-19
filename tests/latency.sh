@@ -20,15 +20,15 @@
 # Needs Docker with Compose, ffmpeg with libmp3lame and libopus, curl and python3.
 set -euo pipefail
 
-# Budgets, seconds (docs/reference/latency.md). With #85's bursts: delays and
-# switches 0.5-0.8 s, but Opus back to live 0.6-1.5 s (the DJ's reconnect
-# stall stays in the delay, so after_return has 2 s); a dead source 3-4.5 s.
+# Budgets, seconds (docs/reference/latency.md). With #85's bursts and 100 ms
+# Ogg pages on both the DJ's and AutoDJ's Opus (#93): delays and switches
+# 0.3-0.8 s; a dead source 3-4.5 s.
 : "${LATENCY_MAX_AUTODJ_START:=10}"   # library published to first AutoDJ byte
 : "${LATENCY_MAX_AUTODJ_RESTART:=5}"  # playout restarted, cache warm, to first AutoDJ byte
 : "${LATENCY_MAX_FIRST_AUDIO:=1}"    # listener start to the first complete frame
 : "${LATENCY_MAX_DELAY:=1.5}"        # microphone to ear, live, at connect and steady
-: "${LATENCY_MAX_SWITCH:=2}"         # DJ stops or starts to the listener hearing it
-: "${LATENCY_MAX_AFTER_RETURN:=2}"   # microphone to ear, after the DJ reconnects
+: "${LATENCY_MAX_SWITCH:=1.5}"       # DJ stops or starts to the listener hearing it
+: "${LATENCY_MAX_AFTER_RETURN:=1.5}" # microphone to ear, after the DJ reconnects
 : "${LATENCY_MAX_DEAD_SOURCE:=5}"    # a DJ's connection dies to AutoDJ heard
 
 cd "$(dirname "$0")/.."
@@ -223,11 +223,15 @@ dj() {
         rate=48000 content_type=audio/ogg kbps=64
         codec=(-c:a libopus -b:a 64k -application audio -flush_packets 1 -page_duration 100000 -f ogg)
     fi
-    { python3 tests/latency_source.py --seconds "$seconds" --rate "$rate" --t0 "$t0"; sleep "$hang"; } |
+    # Like the desktop app, no audio until Icecast accepts the source: $t0.pressed is when the DJ pressed Go Live,
+    # $t0 when the first sample is captured (#93).
+    rm -f "$t0.ready"
+    { python3 tests/latency_source.py --seconds "$seconds" --rate "$rate" --t0 "$t0" --pressed "$t0.pressed" --wait-for "$t0.ready"
+        sleep "$hang"; } |
         ffmpeg -nostdin -loglevel error -f s16le -ar "$rate" -ac 2 -probesize 32 -analyzeduration 0 -i pipe:0 \
             "${codec[@]}" pipe:1 |
         python3 tests/raw_source.py ingest.localhost "$https_port" "$mount" "42:$secret" --ca "$ca" \
-            --connect 127.0.0.1 --content-type "$content_type" --bitrate "$kbps" >/dev/null || true
+            --connect 127.0.0.1 --content-type "$content_type" --bitrate "$kbps" --ready "$t0.ready" >/dev/null || true
 }
 # A listener on live.$2 for $3 seconds, recorded into $work/$1.
 listener() {
@@ -261,7 +265,8 @@ echo "|---|---|---|---|" >>"$summary"
 declare -A result
 for fmt in mp3 opus; do
     result[$fmt]=$(python3 tests/latency.py "$work/$fmt" "$fmt" \
-        --session "$(cat "$work/$fmt.t0.1"):35" --session "$(cat "$work/$fmt.t0.2"):15") ||
+        --session "$(cat "$work/$fmt.t0.1"):35:$(cat "$work/$fmt.t0.1.pressed")" \
+        --session "$(cat "$work/$fmt.t0.2"):15:$(cat "$work/$fmt.t0.2.pressed")") ||
         { echo "FAIL - $fmt: tests/latency.py failed, nothing measured"; result[$fmt]='{}'; }
     echo "info - $fmt: ${result[$fmt]}"
 done

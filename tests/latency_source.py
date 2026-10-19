@@ -6,11 +6,16 @@ who decodes the stream can tell which second it hears (latency.py). The wall
 clock time of the first sample goes to --t0 when it is written: second j left
 the microphone at t0 + j.
 
-    python3 latency_source.py --seconds 30 --rate 48000 --t0 FILE | ffmpeg -f s16le ...
+    python3 latency_source.py --seconds 30 --rate 48000 --t0 FILE [--pressed FILE --wait-for FILE] | ffmpeg -f s16le ...
+
+With --wait-for, it writes the time it started to --pressed (the DJ presses Go Live) and produces no audio until
+FILE exists (raw_source.py --ready: Icecast accepted the source). The desktop app works that way: it starts its
+encoder once the connection is accepted, so nothing captured during TLS and source auth is sent late (#93).
 """
 
 import argparse
 import math
+import os
 import struct
 import sys
 import time
@@ -27,7 +32,19 @@ def main():
     parser.add_argument("--seconds", type=int, required=True)
     parser.add_argument("--rate", type=int, default=48000)
     parser.add_argument("--t0", required=True, help="file that receives the wall clock time of the first sample")
+    parser.add_argument("--pressed", help="file that receives the wall clock time the script started")
+    parser.add_argument("--wait-for", help="produce no audio until this file exists")
     args = parser.parse_args()
+
+    if args.pressed:
+        with open(args.pressed, "w") as handle:
+            handle.write(f"{time.time():.6f}\n")
+    if args.wait_for:
+        deadline = time.monotonic() + 30
+        while not os.path.exists(args.wait_for):
+            if time.monotonic() > deadline:
+                sys.exit("latency_source.py: the source was not accepted within 30 s")
+            time.sleep(0.005)
 
     per_chunk = int(args.rate * CHUNK)
     out = sys.stdout.buffer
