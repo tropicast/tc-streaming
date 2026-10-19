@@ -177,7 +177,7 @@ Until that test runs, plan with:
 
 | Use | Factor over audio payload |
 |---|---|
-| Framing only (normal load, many networks) | **1.10** (Opus 1.09, MP3 1.12) |
+| Framing only (normal load, many networks) | **1.10** (Opus 1.09, MP3 1.12); 1.15 since the 2026-10-18 re-test, see below |
 | Worst case measured (1,400 listeners from one host) | 1.28 |
 
 Real listeners come from many networks, not from one VM. Retransmits
@@ -366,3 +366,56 @@ Steps, with the release that contains #85 deployed on the node:
 7. Put the test station back on its plan, stop the sources, copy the results off the load
    generator (`scp ops@<ipv4>:ramp.txt .`), `terraform destroy` it, and add
    the results here.
+
+### Results (2026-10-18/19)
+
+Node `tc-stream-1` with #85 (0.5 s bursts, 3 s source timeout) and #86. The test station was on the Pro plan, so its
+MP3 burst was 1.25 s (see the table above): judge stalls on Opus. Load from `tc-loadgen-1` (`infra/loadgen`) in
+the same site, sources with the desktop app's flags (100 ms Ogg pages).
+
+**Verdict: pass.** No drops, refusals, errors or stalls, in the ramp test or in 24 hours. Every listener kept its
+first connection. Memory is flat. Time to first audio on Opus is better than before. The node uses more CPU per
+listener than on 2026-10-06; it is far from a limit (see below).
+
+Listeners:
+
+| | Ramp: 1,400 for 10 min | Soak: 300 for 24 h | 2026-10-06 (ramp / soak) |
+|---|---|---|---|
+| Drops / refused / errors | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Stalls (gap > 500 ms), Opus | 1 of 700, 560 ms (\*) | 0 | not measured |
+| Stalls, MP3 | 0 | 0 | not measured |
+| Longest gap, Opus / MP3 | 560 / 425 ms | 320 / 214 ms | not measured |
+| Time to first audio p95, Opus | 425 ms | 423 ms | 999 ms / 1.0 s |
+| Time to first audio p95, MP3 | 385 ms | 378 ms | 383 / 374 ms |
+| Payload per listener-hour, Opus / MP3 | 21.5 / 57.6 MB | 21.4 / 57.6 MB | 20.9 / 57.9 MB |
+
+(\*) Between 840 and 850 s, the same 10 s as the node's highest retransmit rate of the hold (113/s against 26/s on
+average): the network path, not Icecast. Shorter than the 0.75 s Opus burst a player starts with.
+
+Node, during the hold:
+
+| | Ramp (48 samples) | Soak (1,387 samples) | 2026-10-06 (ramp / soak) |
+|---|---|---|---|
+| CPU busy | 21.7 % (max 22.9) | 6.2 % (max 21.5), flat | 13.8 % / 3.8 % |
+| Network out | 163.0 Mbit/s | 29.9 Mbit/s, flat | 155.8 / 28.3 Mbit/s |
+| Caddy CPU | 59.5 % | 15.0 % | 38.6 % / 9.6 % |
+| Icecast CPU | 16.1 % | 4.3 % | 10.8 % / 2.9 % |
+| Icecast memory | 27.7 MB | 26.9 → 27.4 MB | 14.5 / 14.7 MB |
+| Caddy memory | 325 → 355 MB | 298 → 298 MB | 316 → 351 / 281 MB |
+| Retransmits | 0.07 % of segments | 0.06 % | not measured |
+| Bytes per TCP segment | 558 | 552 | not measured (751 locally, #37) |
+| Overhead over the audio payload | 33 % | 13.5 % | 28 % / 8.5 % |
+
+What changed since 2026-10-06:
+
+- **CPU is about 60 % higher for the same listeners**, mostly Caddy (TLS). Segments carry about 552 bytes of audio
+  instead of 751 measured locally in #37: more, smaller writes, so more TLS records and segments. The likely cause
+  is the Opus sources' 100 ms Ogg pages (tc-station#74, about 575 bytes at 46 kbit/s) instead of about 1 s pages:
+  each page reaches the listener as its own write. Not proven: a ramp with the Opus source on FFmpeg's default
+  pages would confirm it. At 1,400 listeners the node is at 22 % CPU, so capacity is still set by the 20 TB egress
+  quota, not the CPU.
+- **Overhead on the wire grew with it**: 13.5 % at 300 listeners (8.5 % before), 33 % at 1,400 (28 %). Plan with
+  1.15 instead of 1.10 for framing at normal load (Egress overhead above), until the cause is confirmed.
+- **Icecast holds about 13 MB more memory** (27 MB), flat over 24 hours: no leak. Likely the AutoDJ mounts and
+  per-mount settings added since; not a concern at this size.
+- **Opus starts faster**: 423 ms instead of about 1 s at p95, from the smaller pages and burst.

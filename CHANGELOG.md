@@ -9,6 +9,10 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Added
+
+- Load and soak re-test after #83 (#94): 1,400 listeners and 300 for 24 h, no drops or stalls; CPU about 60 % higher per listener, likely the 100 ms Ogg pages ([load test](docs/load-test.md#results-2026-10-1819)).
+
 ### Changed
 
 - AutoDJ goes on air within seconds (#86): the playout service polls every 3 s instead of 30 s (`304` while nothing changed), and starts a station as soon as one of its tracks is cached. It downloads the others in the background, `PLAYOUT_DOWNLOAD_WORKERS` (4) at once, every station's first track first. 200 tracks published to the first AutoDJ byte: 27 s before, 5–9 s now (most of it Liquidsoap's start).
