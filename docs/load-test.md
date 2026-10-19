@@ -333,7 +333,7 @@ Steps, with the release that contains #85 deployed on the node:
    with the station on Starter (500 listeners: about 250 MP3 for an hour).
 2. Create the load generator, `tc-loadgen-1`, with `infra/loadgen`
    ([Load generator](reference/infrastructure.md#load-generator-terraform)):
-   `terraform apply`, then `ssh root@<ipv4> cloud-init status --wait`. It has
+   `terraform apply`, then `ssh ops@<ipv4> cloud-init status --wait`. It has
    ffmpeg, tmux and `loadtest` installed. `tc-runner-1`, used for #12, no
    longer exists.
 3. Publish the two sources from it, inside `tmux`, with the desktop app's
@@ -364,5 +364,5 @@ Steps, with the release that contains #85 deployed on the node:
 6. Soak: the same with `-listeners 150` each, `-ramp 2m -hold 24h -every 5m`,
    under `tmux`, and the node sampled every 60 s.
 7. Put the test station back on its plan, stop the sources, copy the results off the load
-   generator (`scp root@<ipv4>:ramp.txt .`), `terraform destroy` it, and add
+   generator (`scp ops@<ipv4>:ramp.txt .`), `terraform destroy` it, and add
    the results here.

@@ -41,10 +41,12 @@ remove the server or IPs.
 `infra/loadgen` creates a throwaway server for the load and soak tests
 (#96, [docs/load-test.md](../load-test.md#re-test-after-the-latency-changes-83)):
 a CX33 in the node's location, SSH from `admin_cidrs` only, and nothing else
-inbound. cloud-init installs ffmpeg, Go and tmux, clones this repository to
+inbound. You log in as `ops` (passwordless sudo, your `ssh_public_keys`);
+root cannot log in. cloud-init installs ffmpeg, Go and tmux, clones this repository to
 `/opt/tc-streaming` and builds `/usr/local/bin/loadtest`. Its state is local
 and separate from the node's. It is billed by the hour while it exists
-(about $0.02/h for a CX33), so destroy it when the test ends.
+(about $0.02/h for a CX33), so destroy it when the test ends. Changing `cloud-init.yaml` or the keys
+replaces the server on the next `apply`.
 
 ```sh
 cd infra/loadgen
@@ -52,7 +54,7 @@ cp terraform.tfvars.example terraform.tfvars  # keys, admin CIDRs
 export HCLOUD_TOKEN=...
 terraform init
 terraform apply                               # prints the ssh command
-ssh root@<ipv4> cloud-init status --wait      # ready when it says "done"
+ssh ops@<ipv4> cloud-init status --wait      # ready when it says "done"
 terraform destroy                             # after the test
 ```
 

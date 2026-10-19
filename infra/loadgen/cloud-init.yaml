@@ -1,10 +1,18 @@
 #cloud-config
-# Load generator (#96): key-only SSH, the test sources' encoders (ffmpeg with
+# Load generator (#96): key-only SSH as ops (passwordless sudo, like the
+# node's; root cannot log in), the test sources' encoders (ffmpeg with
 # libmp3lame and libopus), tmux for the 24 h soak, and tools/loadtest built
-# from the repository. /var/lib/cloud/instance/boot-finished appears when it
-# is ready; /opt/tc-streaming holds the checkout.
+# from the repository. `cloud-init status --wait` returns when it is ready;
+# /opt/tc-streaming holds the checkout.
 ssh_pwauth: false
-disable_root: false
+disable_root: true
+users:
+  - name: ops
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys: ${ssh_keys}
 package_update: true
 packages:
   - ffmpeg
@@ -12,9 +20,10 @@ packages:
   - golang-go
   - tmux
 runcmd:
-  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
   - systemctl reload ssh
   - git clone --depth 1 --branch ${ref} ${repository} /opt/tc-streaming
+  - chown -R ops:ops /opt/tc-streaming
   - cd /opt/tc-streaming/tools/loadtest && HOME=/root GOCACHE=/root/.cache/go-build go build -o /usr/local/bin/loadtest .
   # Listener sockets: one file descriptor each, 1,400 and more in the ramp test.
-  - printf '* soft nofile 65536\n* hard nofile 65536\nroot soft nofile 65536\nroot hard nofile 65536\n' > /etc/security/limits.d/loadgen.conf
+  - printf '* soft nofile 65536\n* hard nofile 65536\n' > /etc/security/limits.d/loadgen.conf

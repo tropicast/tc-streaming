@@ -3,5 +3,5 @@ output "ipv4" {
 }
 
 output "ssh" {
-  value = "ssh root@${hcloud_server.loadgen.ipv4_address}"
+  value = "ssh ops@${hcloud_server.loadgen.ipv4_address}"
 }

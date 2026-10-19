@@ -67,6 +67,8 @@ resource "hcloud_server" "loadgen" {
   user_data = templatefile("${path.module}/cloud-init.yaml", {
     repository = var.repository
     ref        = var.ref
+    # A JSON list is a YAML flow sequence.
+    ssh_keys = jsonencode(values(var.ssh_public_keys))
   })
 
   public_net {
