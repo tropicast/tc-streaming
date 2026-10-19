@@ -99,7 +99,7 @@ jobs:
 
       # crane adds a tag to an existing manifest without rewriting it, so the digest stays the same
       # ("docker buildx imagetools create" re-creates the manifest: a new digest).
-      - uses: imjasonh/setup-crane@v0.4
+      - uses: imjasonh/setup-crane@v0.7
 
       - name: Log in to GHCR
         env:
