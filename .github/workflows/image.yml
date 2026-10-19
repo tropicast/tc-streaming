@@ -47,7 +47,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/docker"
           echo "DOCKER_CONFIG=$RUNNER_TEMP/docker" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
 

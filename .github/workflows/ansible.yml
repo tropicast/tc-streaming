@@ -27,7 +27,7 @@ jobs:
       run:
         working-directory: infra/ansible
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
       # Versions pinned in requirements.txt (bumped by Dependabot).
       - run: uvx --with-requirements requirements.txt ansible-lint site.yml
