@@ -25,7 +25,7 @@ jobs:
       caddy_tag: ${{ steps.images.outputs.caddy_tag }}
       playout_tag: ${{ steps.images.outputs.playout_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -136,7 +136,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false

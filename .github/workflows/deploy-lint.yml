@@ -25,7 +25,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: shellcheck deploy/*.sh tests/*.sh
       - name: deploy.sh restarts services whose files changed
