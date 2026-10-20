@@ -22,14 +22,16 @@ set -euo pipefail
 
 # Budgets, seconds (docs/reference/latency.md). With #85's bursts and 100 ms
 # Ogg pages on both the DJ's and AutoDJ's Opus (#93): delays and switches
-# 0.3-0.8 s; a dead source 3-4.5 s.
+# 0.3-0.8 s; a dead source 3-4.5 s. Switches to AutoDJ include part of its
+# 2 s fade-in (#109): it is heard once loud enough to tell its tone apart.
 : "${LATENCY_MAX_AUTODJ_START:=10}"   # library published to first AutoDJ byte
 : "${LATENCY_MAX_AUTODJ_RESTART:=5}"  # playout restarted, cache warm, to first AutoDJ byte
 : "${LATENCY_MAX_FIRST_AUDIO:=1}"    # listener start to the first complete frame
 : "${LATENCY_MAX_DELAY:=1.5}"        # microphone to ear, live, at connect and steady
-: "${LATENCY_MAX_SWITCH:=1.5}"       # DJ stops or starts to the listener hearing it
+: "${LATENCY_MAX_SWITCH:=1.5}"       # DJ starts to the listener hearing it
+: "${LATENCY_MAX_TO_AUTODJ:=2.5}"    # DJ stops to the listener hearing AutoDJ (fading in)
 : "${LATENCY_MAX_AFTER_RETURN:=1.5}" # microphone to ear, after the DJ reconnects
-: "${LATENCY_MAX_DEAD_SOURCE:=5}"    # a DJ's connection dies to AutoDJ heard
+: "${LATENCY_MAX_DEAD_SOURCE:=7}"    # a DJ's connection dies to AutoDJ heard (fading in)
 
 cd "$(dirname "$0")/.."
 free_port() {
@@ -276,7 +278,7 @@ for fmt in mp3 opus; do
     budget "$fmt first_audio" "$(field "$fmt" first_audio)" "$LATENCY_MAX_FIRST_AUDIO"
     budget "$fmt connect" "$(field "$fmt" connect)" "$LATENCY_MAX_DELAY"
     budget "$fmt steady" "$(field "$fmt" steady)" "$LATENCY_MAX_DELAY"
-    budget "$fmt to_autodj" "$(field "$fmt" to_autodj)" "$LATENCY_MAX_SWITCH"
+    budget "$fmt to_autodj" "$(field "$fmt" to_autodj)" "$LATENCY_MAX_TO_AUTODJ"
     budget "$fmt to_live" "$(field "$fmt" to_live)" "$LATENCY_MAX_SWITCH"
     budget "$fmt after_return" "$(field "$fmt" after_return)" "$LATENCY_MAX_AFTER_RETURN"
     measured["$fmt wire_steady"]=$(field "$fmt" wire_steady)
@@ -306,7 +308,7 @@ row "Listener start to first audio" first_audio "$LATENCY_MAX_FIRST_AUDIO"
 row "Microphone to ear, at connect" connect "$LATENCY_MAX_DELAY"
 row "Microphone to ear, steady" steady "$LATENCY_MAX_DELAY"
 row "Microphone to listener, on the wire" wire_steady "-"
-row "Live to AutoDJ (DJ stops to AutoDJ heard)" to_autodj "$LATENCY_MAX_SWITCH"
+row "Live to AutoDJ (DJ stops to AutoDJ heard)" to_autodj "$LATENCY_MAX_TO_AUTODJ"
 row "AutoDJ to live (DJ starts to DJ heard)" to_live "$LATENCY_MAX_SWITCH"
 row "Microphone to ear, after the DJ returns" after_return "$LATENCY_MAX_AFTER_RETURN"
 row "DJ's connection dies to AutoDJ heard" dead_source "$LATENCY_MAX_DEAD_SOURCE"
