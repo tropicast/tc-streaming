@@ -32,6 +32,8 @@ OPUS_BURST_KBPS = 96
 DIRECTORY_TEXT = {"name": 400, "description": 512, "genre": 256}
 DIRECTORY_URLS = ("homepage", "logo", "main_stream_url")
 COUNTRY = re.compile(r"^[A-Z]{2}$")
+# "<lat>,<long>" in decimal degrees, as RadioBrowser reads icy-geo-lat-long (#105).
+GEO_LAT_LONG = re.compile(r"^(-?\d{1,3}(?:\.\d{1,6})?),(-?\d{1,3}(?:\.\d{1,6})?)$")
 # ISO 639-1 (two-letter) language codes: what directories and the control plane use.
 ISO_639_1 = frozenset("""
 aa ab ae af ak am an ar as av ay az ba be bg bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de dv dz ee el en eo es
@@ -153,6 +155,10 @@ def check_directory(station_id, directory):
         elif key == "language_codes":
             if not all(code in ISO_639_1 for code in value.split(",")):
                 sys.exit(f"{where}: language_codes must be comma-separated ISO 639-1 codes")
+        elif key == "geo_lat_long":
+            match = GEO_LAT_LONG.match(value)
+            if not match or abs(float(match[1])) > 90 or abs(float(match[2])) > 180:
+                sys.exit(f"{where}: geo_lat_long must be '<latitude>,<longitude>' in decimal degrees")
         else:
             sys.exit(f"{where}: unknown key {key!r}")
 
@@ -176,7 +182,7 @@ def directory_settings(mount, directory):
         for key, header in (("name", "icy-name"), ("description", "icy-description"), ("genre", "icy-genre"),
                             ("homepage", "icy-url"), ("country_code", "icy-country-code"),
                             ("language_codes", "icy-language-codes"), ("logo", "icy-logo"),
-                            ("main_stream_url", "icy-main-stream-url")):
+                            ("main_stream_url", "icy-main-stream-url"), ("geo_lat_long", "icy-geo-lat-long")):
             if directory.get(key):
                 headers[header] = directory[key]
     else:
