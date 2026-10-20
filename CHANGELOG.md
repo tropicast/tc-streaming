@@ -9,6 +9,10 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Added
+
+- `stations.json`: `directory.geo_lat_long` (`"<lat>,<long>"`), sent as `icy-geo-lat-long` by a listed station's mounts (#105). RadioBrowser reads it to place an already listed station on its map (tc-dashboard#148). Deploy this before the tc-dashboard release that sends it: an older node refuses the whole file.
+
 ### Fixed
 
 - Back to live on Opus took up to 1.7 s, and listeners stayed that far behind the DJ (#93): AutoDJ sent Ogg pages of about 1.25 s, and a listener plays out the page they hold before the live audio. AutoDJ's Opus now leaves in 100 ms pages, as the desktop app's: 0.5–0.7 s, as quick as MP3. Deploying it restarts the AutoDJ sources. `tests/latency.sh` budgets for switches are back to 1.5 s, and its DJ captures audio only once Icecast accepts it, as the app does.

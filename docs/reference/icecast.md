@@ -91,7 +91,8 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
 - `directory` (optional, tc-dashboard#13): public metadata of a station
   listed in directories such as RadioBrowser: `listed`, `name`,
   `description`, `genre`, `homepage`, `logo`, `country_code`,
-  `language_codes`, `main_stream_url`. When listed, the station's mounts send
+  `language_codes`, `main_stream_url`, `geo_lat_long` (`"<lat>,<long>"` in
+  decimal degrees, #105, sent as `icy-geo-lat-long`). When listed, the station's mounts send
   `icy-version: 2`, `icy-index-metadata: 1` and the matching `icy-*` headers,
   which directories read to update their listing (RadioBrowser has no edit
   API). These headers come before any the source sends, so the control
@@ -100,7 +101,8 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   honours the opt-out only with both, then marks the entry broken, which hides
   it from most apps. Values are checked: text without control characters
   (C0, DEL, C1, line separators), http(s) URLs, a two-letter country code,
-  ISO 639-1 language codes.
+  ISO 639-1 language codes, a latitude from -90 to 90 and a longitude from
+  -180 to 180 with at most 6 decimals.
 - `autodj` (optional, default `false`, #62): the station plays an AutoDJ
   playlist when no DJ is live. Each of its formats gets a hidden mount
   `/stations/{id}/autodj.{fmt}`, fed by the playout worker over the internal

@@ -31,13 +31,14 @@ secret99=$(openssl rand -hex 16)
 secret55=$(openssl rand -hex 16)
 write_limits() {
     # $1: station 42's listener cap; $2: station 55's AutoDJ flag (default
-    # true). Overwrites in place for the bind mount.
+    # true); $3: station 42's position (#105). Overwrites in place for the
+    # bind mount.
     cat >"$stations" <<JSON
 {"default": {"max_listeners": 3},
  "stations": {"42": {"plan": "free", "max_listeners": $1, "max_bitrate_kbps": 64, "formats": ["mp3"],
                      "directory": {"listed": true, "name": "Radio 42", "genre": "salegy", "country_code": "MG",
                                    "language_codes": "mg,fr", "homepage": "https://radio42.example",
-                                   "logo": "https://radio42.example/logo.png",
+                                   "logo": "https://radio42.example/logo.png", "geo_lat_long": "${3:--18.8792,47.5079}",
                                    "main_stream_url": "https://listen.example/stations/42/live.mp3"}},
               "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}},
               "55": {"plan": "pro", "max_listeners": 25000, "max_bitrate_kbps": 320, "formats": ["mp3", "opus"],
@@ -130,6 +131,7 @@ check "listed station: icy-name from the control plane" "Radio 42" "$(header icy
 check "listed station: icy-genre" salegy "$(header icy-genre)"
 check "listed station: icy-country-code" MG "$(header icy-country-code)"
 check "listed station: icy-logo" https://radio42.example/logo.png "$(header icy-logo)"
+check "listed station: icy-geo-lat-long" -18.8792,47.5079 "$(header icy-geo-lat-long)"
 
 # Delisted station 99 (listed false), with room under its cap: only the opt-out.
 publish "99:$secret99" /stations/99/live.mp3 30 >/dev/null &
@@ -138,7 +140,7 @@ sleep 3
 delisted=$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/99/live.mp3" | tr -d '\r' || true)
 check "delisted station: answers (not at its cap)" 200 "$(head -n 1 <<<"$delisted" | cut -d' ' -f2)"
 check "delisted station: icy-do-not-index" 1 "$(grep -i '^icy-do-not-index:' <<<"$delisted" | cut -d' ' -f2-)"
-check "delisted station: no listed-only headers" "" "$(grep -iE '^icy-(country-code|logo|language-codes|main-stream-url):' <<<"$delisted" || true)"
+check "delisted station: no listed-only headers" "" "$(grep -iE '^icy-(country-code|logo|language-codes|main-stream-url|geo-lat-long):' <<<"$delisted" || true)"
 
 # Caps Icecast cannot take (#55): above its 16384 limit the cap is lowered,
 # 0 is refused before Icecast sees it and the running config is kept.
@@ -192,5 +194,9 @@ reload_error=$(compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.
 check "a cap of 0 fails the reload with a clear message" yes \
     "$([[ $reload_error == *"station 42 needs an integer max_listeners >= 1"* ]] && echo yes || echo no)"
 check "a failed reload keeps the running caps" 4 "$(config_cap /stations/42/live.mp3)"
+write_limits 4 false "91,47.5"
+reload_error=$(compose exec -T icecast python3 /usr/local/bin/docker-entrypoint.py reload-stations 2>&1 >/dev/null || true)
+check "a latitude above 90 fails the reload" yes \
+    "$([[ $reload_error == *"geo_lat_long must be"* ]] && echo yes || echo no)"
 
 exit "$failures"
