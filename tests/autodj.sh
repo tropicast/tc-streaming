@@ -4,7 +4,8 @@
 # playout service. A listener on each live mount (MP3, Opus) hears:
 #   live (1000 Hz) -> AutoDJ (440 Hz) when the DJ drops -> live when the DJ
 #   returns -> AutoDJ again when that set ends,
-# on one connection. Reports the longest stall a listener sees at each switch.
+# on one connection. Reports the longest stall a listener sees at each switch,
+# and checks AutoDJ fades in when the DJ drops (#109).
 # Then a live source with another bitrate and sample rate than AutoDJ (step 4,
 # informational: what a listener gets is documented in docs/reference/playout.md).
 # Needs Docker with Compose, ffmpeg with libmp3lame and libopus, curl and python3.
@@ -199,6 +200,10 @@ for fmt in mp3 opus; do
     check "$fmt: live, AutoDJ when the DJ drops, live when the DJ returns, AutoDJ again" "L A L A" "$(timeline "$fmt")"
     to_autodj=$(stall "$fmt" "$drop" "$back")
     to_live=$(stall "$fmt" "$back" "$(python3 -c "print($back + 12)")")
+    # AutoDJ fades in (#109): its first 0.3 s at least 4 dB under its level 2.5 s later, at both switches.
+    levels=$(python3 tests/tone_timeline.py "$work/$fmt" --fade-in)
+    check "$fmt: AutoDJ fades in at each switch from live (${levels:-none} dB)" yes \
+        "$(python3 -c "import sys; v = [float(x) for x in sys.argv[1].split()]; print('yes' if len(v) == 2 and max(v) <= -4 else 'no')" "$levels")"
     check "$fmt: longest stall at the switch to AutoDJ under 5 s (${to_autodj} s)" yes \
         "$(python3 -c "print('yes' if $to_autodj < 5 else 'no')")"
     check "$fmt: longest stall at the switch back to live under 5 s (${to_live} s)" yes \

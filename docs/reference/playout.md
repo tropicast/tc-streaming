@@ -22,6 +22,19 @@ per format, a DJ who drops, comes back and drops again.
 | AutoDJ to live: longest time without new bytes | 0.2 s | 2.8 s |
 | Listener reconnects | none | none |
 
+- AutoDJ fades in (#109). While a DJ is live on a format, that format's
+  AutoDJ output is silent: nobody hears it then. When the DJ drops, it fades
+  in over 2 s (`FADE_IN_SECONDS`), and when every format's DJ has dropped
+  it starts a new track (through the 3 s crossfade). How the supervisor
+  knows: it reads Icecast's public `/status-json.xsl` every
+  `PLAYOUT_LIVE_POLL_SECONDS` (0.25); a `live.<fmt>` mount listed with a
+  `stream_start` has a DJ (one without is a mount whose listeners were moved
+  to its fallback). It writes the live formats to each station's
+  `/run/playout/stations/<id>/live` file, which Liquidsoap watches. When
+  Icecast cannot tell, no format counts as live: AutoDJ stays audible rather
+  than silent. The fade is not a crossfade: Icecast moves listeners between
+  mounts and cannot mix them ([ADR 0001](../adr/0001-live-autodj-switch.md)).
+  The DJ's own fade-in and fade-out are the desktop app's (tc-station#80).
 - How late the listener hears a switch (the backlog they play first) is in
   [Latency](latency.md): `tests/latency.sh` (#84).
 - The stall is measured from the moment the DJ's source stops (or its client
@@ -215,6 +228,7 @@ credentials. Body at most 8 MiB:
 | `PLAYOUT_PASSWORD` | `ICECAST_SOURCE_AUTH_PASSWORD` (deploy workflow) | Node password for the endpoint (secret) |
 | `PLAYOUT_POLL_SECONDS` | `3` | Poll interval |
 | `PLAYOUT_DOWNLOAD_WORKERS` | `4` | Track downloads at once |
+| `PLAYOUT_LIVE_POLL_SECONDS` | `0.25` | How often Icecast is asked which live mounts have a DJ (#109) |
 | `PLAYOUT_MAX_TRACK_MB` | `200` | Largest track accepted |
 | `PLAYOUT_ICECAST_HOST`, `PLAYOUT_ICECAST_PORT` | `icecast`, `8000` | Icecast on the internal network |
 | `PLAYOUT_CPUS`, `PLAYOUT_MEMORY` | `1.5`, `2g` | Compose limits of the service (deploy variables) |

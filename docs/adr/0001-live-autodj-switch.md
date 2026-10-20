@@ -93,3 +93,15 @@ Revisit if one of these becomes a requirement:
 - Opus back to live consistently under 1 s. Try first the cheaper path:
   make the DJ's first pages reach Icecast sooner (the desktop app connects,
   then starts FFmpeg; tc-station#74).
+
+## Follow-up: fades (#109)
+
+Crossfades between AutoDJ and the DJ were asked for (#109). Decision: fades
+at the edges first, keeping the Icecast fallback; this ADR stands.
+
+- AutoDJ is silent while a DJ is live and fades in when the DJ drops
+  ([AutoDJ playout](../reference/playout.md#handoff)).
+- The desktop app fades the DJ in on connect and out on stop (tc-station#80).
+- Left: AutoDJ still stops abruptly when a DJ connects (the DJ's fade-in
+  covers it), and a dropped connection cuts the DJ off. Revisit the
+  Liquidsoap path above if these matter to listeners or stations.
