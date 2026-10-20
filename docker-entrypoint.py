@@ -259,6 +259,10 @@ def apply_station_limits(tree, stations):
                 if burst is not None:
                     ET.SubElement(mount, "burst-size").text = str(burst)
                 ET.SubElement(mount, "hidden").text = "1"
+                # A listener on the idle live mount gets this mount's headers:
+                # directories must see the station there too (#107).
+                if "directory" in limits:
+                    directory_settings(mount, limits["directory"])
                 mount.append(copy.deepcopy(auth))
                 root.insert(position, mount)
                 position += 1

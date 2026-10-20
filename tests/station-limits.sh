@@ -42,7 +42,9 @@ write_limits() {
                                    "main_stream_url": "https://listen.example/stations/42/live.mp3"}},
               "99": {"plan": "starter", "max_listeners": 10, "formats": ["mp3"], "directory": {"listed": false}},
               "55": {"plan": "pro", "max_listeners": 25000, "max_bitrate_kbps": 320, "formats": ["mp3", "opus"],
-                     "autodj": ${2:-true}}}}
+                     "autodj": ${2:-true},
+                     "directory": {"listed": true, "name": "Radio 55", "logo": "https://radio55.example/logo.png",
+                                   "geo_lat_long": "-18.1492,49.4023"}}}}
 JSON
 }
 write_limits 2
@@ -181,6 +183,14 @@ sleep 3
 listen g /stations/55/live.mp3
 sleep 3
 check "AutoDJ: a listener on the idle live mount hears AutoDJ" yes "$([[ $(size g) -gt 0 ]] && echo yes || echo no)"
+# Directories connect to the live URL: while AutoDJ is on air they must still
+# see the station's metadata (#107).
+idle=$(curl -s -D - -o /dev/null -m 2 "http://127.0.0.1:$port/stations/55/live.mp3" | tr -d '\r' || true)
+idle_header() { grep -i "^$1:" <<<"$idle" | head -n 1 | cut -d' ' -f2-; }
+check "AutoDJ on air: icy-index-metadata" 1 "$(idle_header icy-index-metadata)"
+check "AutoDJ on air: icy-name is the station's" "Radio 55" "$(idle_header icy-name)"
+check "AutoDJ on air: icy-logo" https://radio55.example/logo.png "$(idle_header icy-logo)"
+check "AutoDJ on air: icy-geo-lat-long" -18.1492,49.4023 "$(idle_header icy-geo-lat-long)"
 check "AutoDJ: autodj mount is not on the public status page" 0 \
     "$(curl -s -m 3 "http://127.0.0.1:$port/status-json.xsl" | grep -c 'autodj' || true)"
 
