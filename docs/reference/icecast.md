@@ -92,7 +92,8 @@ Each station gets its own Icecast mounts with a listener cap (issue #8).
   listed in directories such as RadioBrowser: `listed`, `name`,
   `description`, `genre`, `homepage`, `logo`, `country_code`,
   `language_codes`, `main_stream_url`, `geo_lat_long` (`"<lat>,<long>"` in
-  decimal degrees, #105, sent as `icy-geo-lat-long`). When listed, the station's mounts send
+  decimal degrees, #105, sent as `icy-geo-lat-long`). When listed, the station's mounts (its AutoDJ
+  mounts too, #107: a listener on an idle live mount gets their headers) send
   `icy-version: 2`, `icy-index-metadata: 1` and the matching `icy-*` headers,
   which directories read to update their listing (RadioBrowser has no edit
   API). These headers come before any the source sends, so the control

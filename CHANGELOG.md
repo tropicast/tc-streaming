@@ -9,6 +9,10 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Fixed
+
+- Directory metadata reached RadioBrowser only while a DJ was live (#107): a listener on an idle live mount gets the AutoDJ fallback mount's headers, which had none (`icy-name: AutoDJ`, no `icy-index-metadata`). The `autodj.<fmt>` mounts now send the station's directory headers and name too, so a listing updates whatever is on air. Deploying it restarts Icecast (a new image): listeners and sources reconnect.
+
 ### Added
 
 - `stations.json`: `directory.geo_lat_long` (`"<lat>,<long>"`), sent as `icy-geo-lat-long` by a listed station's mounts (#105). RadioBrowser reads it to place an already listed station on its map (tc-dashboard#148). Deploy this before the tc-dashboard release that sends it: an older node refuses the whole file.
