@@ -93,6 +93,10 @@ out, to Icecast on the internal Docker network and to the control plane.
   | Endpoint unreachable, `401`, `5xx` or invalid answer | Logged once; every station keeps playing what it has. |
   | Liquidsoap exits | Restarted after 5, 10, 30, then 60 s. |
 
+- Consecutive tracks crossfade (#110): the ending track fades out while the
+  next fades in, over 3 s (Liquidsoap's `crossfade`, `CROSSFADE_SECONDS` in
+  `supervisor.py`). The same happens when the playlist loops. The title
+  changes when the next track starts fading in.
 - A station without any playable track is not started: its live mount then
   has no fallback, rather than holding listeners on silence.
 - Liquidsoap logs to stdout (`docker compose logs playout`), one line per
@@ -230,5 +234,6 @@ credentials. Body at most 8 MiB:
 (`tests/playout_stub.py`, overlay `tests/playout.compose.yaml`) and the
 playout image. It checks MP3, Opus and mono outputs reach a listener on an
 idle live mount, a bad sha256 and a wrong credential are refused, adding and
-removing stations and a new playlist leave a playing station alone, an
+removing stations and a new playlist leave a playing station alone, the
+generated script crossfades tracks, an
 unreachable endpoint keeps stations playing, and no secret is logged.

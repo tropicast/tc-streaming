@@ -185,6 +185,9 @@ check "station 42: the Opus mount shows the track title" yes \
 check "station 42: the MP3 mount shows the track title" yes \
     "$([[ $(wait_title /stations/42/autodj.mp3) == *"Track "* ]] && echo yes || echo no)"
 
+check "station 42: tracks crossfade (#110)" yes \
+    "$(compose exec -T playout cat /run/playout/stations/42/station.liq 2>/dev/null | grep -q 'radio = mksafe(crossfade(' && echo yes || echo no)"
+
 check "station 99: a wrong AutoDJ credential is refused" no "$(mounted /stations/99/autodj.mp3)"
 check "station 99: the refusal comes from source auth" yes \
     "$(logged auth-stub 'mount=/stations/99/autodj.mp3 user=99 -> deny: wrong password')"

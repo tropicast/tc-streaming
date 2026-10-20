@@ -61,6 +61,8 @@ METRICS_PORT = int(os.environ.get("PLAYOUT_METRICS_PORT", "9101"))
 TICK_SECONDS = 2
 # A Liquidsoap process that keeps exiting is restarted at most this often.
 RESTART_BACKOFF = (5, 10, 30, 60)
+# Overlap between consecutive AutoDJ tracks (#110).
+CROSSFADE_SECONDS = 3
 
 STATION_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 TRACK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -370,9 +372,12 @@ def script(station_id, station, playlist):
         "settings.log.level.set(3)",
         "settings.init.allow_root.set(false)",
         'password = environment.get("AUTODJ_PASSWORD")',
-        # mksafe: silence instead of a dropped source while a track loads.
-        f'radio = mksafe(playlist(id={liq_string(station_id)}, mode="{mode}", '
-        f'reload_mode="watch", mime_type="audio/x-mpegurl", {liq_string(str(playlist))}))',
+        f'tracks = playlist(id={liq_string(station_id)}, mode="{mode}", '
+        f'reload_mode="watch", mime_type="audio/x-mpegurl", {liq_string(str(playlist))})',
+        # Each track fades out while the next fades in (#110). mksafe: silence
+        # instead of a dropped source while a track loads.
+        f"radio = mksafe(crossfade(duration={CROSSFADE_SECONDS:.1f}, fade_in={CROSSFADE_SECONDS:.1f}, "
+        f"fade_out={CROSSFADE_SECONDS:.1f}, tracks))",
     ]
     for output in station["outputs"]:
         fmt = output["format"]
