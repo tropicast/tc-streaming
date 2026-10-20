@@ -42,6 +42,7 @@ import threading
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 
 PLAYOUT_URL = os.environ.get("PLAYOUT_URL", "")
@@ -61,6 +62,12 @@ METRICS_PORT = int(os.environ.get("PLAYOUT_METRICS_PORT", "9101"))
 TICK_SECONDS = 2
 # A Liquidsoap process that keeps exiting is restarted at most this often.
 RESTART_BACKOFF = (5, 10, 30, 60)
+# Overlap between consecutive AutoDJ tracks (#110).
+CROSSFADE_SECONDS = 3
+# AutoDJ fades in over this when a DJ's live source drops, and is silent while
+# the DJ is live (#109). How often Icecast is asked which live mounts have a DJ.
+FADE_IN_SECONDS = 2
+LIVE_POLL_SECONDS = float(os.environ.get("PLAYOUT_LIVE_POLL_SECONDS", "0.25"))
 
 STATION_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 TRACK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -71,6 +78,7 @@ FORMATS = {
     "opus": {"sample_rates": {48000}, "bitrates": range(6, 257)},
 }
 METADATA_LIMIT = 256
+LIVE_MOUNT = re.compile(r"^/stations/([A-Za-z0-9-]{1,64})/live\.(mp3|opus)$")
 
 
 def log(message):
@@ -361,22 +369,57 @@ def encoder(output):
     return f'%ffmpeg(format="ogg", page_duration=100000, %audio(codec="libopus", b="{kbps}k", ar={rate}, ac={channels}))'
 
 
-def script(station_id, station, playlist):
+def script(station_id, station, playlist, live):
     """Liquidsoap script of one station. Holds no secret."""
     mode = "randomize" if station["shuffle"] else "normal"
+    formats = [output["format"] for output in station["outputs"]]
     lines = [
         "settings.log.stdout.set(true)",
         "settings.log.file.set(false)",
         "settings.log.level.set(3)",
         "settings.init.allow_root.set(false)",
         'password = environment.get("AUTODJ_PASSWORD")',
-        # mksafe: silence instead of a dropped source while a track loads.
-        f'radio = mksafe(playlist(id={liq_string(station_id)}, mode="{mode}", '
-        f'reload_mode="watch", mime_type="audio/x-mpegurl", {liq_string(str(playlist))}))',
+        f'tracks = playlist(id={liq_string(station_id)}, mode="{mode}", '
+        f'reload_mode="watch", mime_type="audio/x-mpegurl", {liq_string(str(playlist))})',
+        # Each track fades out while the next fades in (#110). mksafe: silence
+        # instead of a dropped source while a track loads.
+        f"radio = mksafe(crossfade(duration={CROSSFADE_SECONDS:.1f}, fade_in={CROSSFADE_SECONDS:.1f}, "
+        f"fade_out={CROSSFADE_SECONDS:.1f}, tracks))",
+        # The formats whose live mount has a DJ, from the supervisor (#109). While
+        # a DJ is live, nobody hears that format's AutoDJ: it stays silent, then
+        # fades in when the DJ drops, so listeners moved back hear no hard cut.
+        f"live_file = {liq_string(str(live))}",
+        "def fade_gain(on, ended) =",
+        "  if on then 0. else",
+        f"    t = (time() - ended) / {FADE_IN_SECONDS:.1f}",
+        "    if t >= 1. then 1. else t end",
+        "  end",
+        "end",
+    ]
+    for fmt in formats:
+        lines += [f"live_{fmt} = ref(false)", f"ended_{fmt} = ref(0.)"]
+    all_live = " and ".join(f"live_{fmt}()" for fmt in formats)
+    lines += [
+        "def check_live() =",
+        "  on = if file.exists(live_file) then string.split(separator=\" \", string.trim(file.contents(live_file))) else [] end",
+        f"  was_all_live = {all_live}",
+    ]
+    for fmt in formats:
+        lines += [
+            f'  if live_{fmt}() and not list.mem("{fmt}", on) then ended_{fmt} := time() end',
+            f'  live_{fmt} := list.mem("{fmt}", on)',
+        ]
+    lines += [
+        # Nobody heard AutoDJ during the show: the fade starts on a new track.
+        f"  if was_all_live and not ({all_live}) then tracks.skip() end",
+        "end",
+        "check_live()",
+        "file.watch(live_file, check_live)",
     ]
     for output in station["outputs"]:
         fmt = output["format"]
-        source = "mean(radio)" if output["channels"] == 1 else "radio"
+        source = f"amplify(override=null, fun () -> fade_gain(live_{fmt}(), ended_{fmt}()), radio)"
+        source = f"mean({source})" if output["channels"] == 1 else source
         # %ffmpeg hides the codec from Liquidsoap, so it cannot guess either: Ogg carries
         # titles in the stream, MP3 needs Icecast's ICY metadata updates.
         # ICY updates carry "song" only ("artist - title"): Icecast warns when
@@ -419,6 +462,8 @@ class Station:
         self.id = station_id
         self.dir = STATE_DIR / "stations" / station_id
         self.dir.mkdir(parents=True, exist_ok=True)
+        # No DJ until watch_live says otherwise: AutoDJ is never held silent by mistake.
+        write_if_changed(self.dir / "live", "\n")
         self.process = None
         self.config = None  # what a restart is needed for: outputs, shuffle, password
         self.failures = 0
@@ -429,7 +474,8 @@ class Station:
         config = (json.dumps(station["outputs"], sort_keys=True), station["shuffle"], station["password"])
         if write_if_changed(self.dir / "playlist.m3u", playlist_content) and self.running():
             log(f"station {self.id}: playlist updated")
-        write_if_changed(self.dir / "station.liq", script(self.id, station, self.dir / "playlist.m3u"))
+        write_if_changed(self.dir / "station.liq",
+                         script(self.id, station, self.dir / "playlist.m3u", self.dir / "live"))
         if config != self.config:
             if self.running():
                 log(f"station {self.id}: settings changed, restarting")
@@ -546,6 +592,7 @@ class Supervisor:
         for path in (STATE_DIR / "stations").iterdir():
             shutil.rmtree(path, ignore_errors=True)
         serve_metrics(self)
+        threading.Thread(target=watch_live, args=(self,), daemon=True).start()
         log(f"polling the control plane every {POLL_SECONDS:g} s")
         next_poll, failing = 0.0, False
         while not self.stopping:
@@ -590,6 +637,40 @@ class Supervisor:
 
     def shutdown(self, *_):
         self.stopping = True
+
+
+def live_formats():
+    """{station id: {format}} of the live mounts with a DJ, from Icecast's public
+    status page (#109); None when it cannot tell. A mount without a source can
+    still be listed (listeners moved to its fallback): only one with
+    stream_start has a source."""
+    try:
+        with urllib.request.urlopen(f"http://{ICECAST_HOST}:{ICECAST_PORT}/status-json.xsl", timeout=1) as response:
+            sources = json.loads(response.read()).get("icestats", {}).get("source") or []
+    except (OSError, ValueError, AttributeError):
+        return None
+    live = {}
+    for source in [sources] if isinstance(sources, dict) else sources:
+        if not isinstance(source, dict) or "stream_start" not in source:
+            continue
+        match = LIVE_MOUNT.match(urllib.parse.urlsplit(str(source.get("listenurl", ""))).path)
+        if match:
+            live.setdefault(match[1], set()).add(match[2])
+    return live
+
+
+def watch_live(supervisor):
+    """Tells each station's Liquidsoap which formats have a DJ, through its live
+    file. When Icecast cannot tell, no format is live: AutoDJ stays audible
+    rather than silent for listeners it may have."""
+    while not supervisor.stopping:
+        live = live_formats() or {}
+        for station_id, station in list(supervisor.stations.items()):
+            try:
+                write_if_changed(station.dir / "live", " ".join(sorted(live.get(station_id, ()))) + "\n")
+            except OSError:  # removed meanwhile
+                pass
+        time.sleep(LIVE_POLL_SECONDS)
 
 
 def cache_size():

@@ -9,6 +9,11 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ## [Unreleased]
 
+### Changed
+
+- AutoDJ fades in when a DJ drops (#109): while a DJ is live on a format, that format's AutoDJ output is silent; when the DJ drops, it fades in over 2 s, on a new track once no format is live, instead of starting at full volume mid-track. The playout service reads Icecast's public status page every 0.25 s (`PLAYOUT_LIVE_POLL_SECONDS`) to know which live mounts have a DJ. Live to AutoDJ is now heard after 1.7–1.9 s (was 0.5–0.8 s), part way into the fade; `tests/latency.sh` budgets it separately (2.5 s, a dead source 7 s). Deploying it restarts the AutoDJ sources.
+- AutoDJ crossfades between tracks (#110): the ending track fades out while the next fades in, over 3 s, instead of a hard cut. Deploying it restarts the AutoDJ sources (a new script): their listeners reconnect.
+
 ### Fixed
 
 - Directory metadata reached RadioBrowser only while a DJ was live (#107): a listener on an idle live mount gets the AutoDJ fallback mount's headers, which had none (`icy-name: AutoDJ`, no `icy-index-metadata`). The `autodj.<fmt>` mounts now send the station's directory headers and name too, so a listing updates whatever is on air. Deploying it restarts Icecast (a new image): listeners and sources reconnect.

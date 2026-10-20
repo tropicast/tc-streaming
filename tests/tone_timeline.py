@@ -5,14 +5,19 @@ recorded stream with ffmpeg to 8 kHz mono and classifies each half second
 by its zero-crossing rate: L (live), A (AutoDJ), - (silence or noise).
 Prints the run-length timeline, e.g. "L L A L" for live, AutoDJ, live.
 
-    python3 tone_timeline.py RECORDING [--raw | --mp3-frames]
+    python3 tone_timeline.py RECORDING [--raw | --mp3-frames | --fade-in]
 
 --raw prints one letter per half second instead. --mp3-frames counts the
 MPEG-1/2 Layer III frames per sample rate and bitrate, e.g.
 "44100 Hz 128 kbps x120, 48000 Hz 64 kbps x80" (ffprobe no longer reports a
 sample rate per frame).
+--fade-in prints, for each switch from live to AutoDJ, how loud AutoDJ's
+first 0.3 s are against its level 2.5 s later, in dB, e.g. "-9.2 -8.7":
+about 0 when AutoDJ starts at full volume, well below when it fades in (#109).
 """
 
+import math
+import statistics
 import subprocess
 import sys
 
@@ -56,6 +61,30 @@ def mp3_frames(data):
     return ", ".join(f"{rate} Hz {kbps} kbps x{n}" for (rate, kbps), n in sorted(counts.items()))
 
 
+def rms(samples):
+    return math.sqrt(sum(s * s for s in samples) / len(samples)) if samples else 0.0
+
+
+def fade_in(samples):
+    """dB of AutoDJ's first 0.3 s after each live-to-AutoDJ switch, against its
+    level 2.5 to 3 s after it started."""
+    step = RATE // 10
+    letters = [classify(samples[i:i + step]) for i in range(0, len(samples) - step + 1, step)]
+    levels, last = [], None
+    for i, letter in enumerate(letters):
+        if letter == "A" and last == "L":
+            onset = i * step
+            later = [rms(samples[j:j + step]) for j in range(onset + 25 * step, onset + 30 * step, step)
+                     if j + step <= len(samples)]
+            if not later:
+                continue  # the recording ends first
+            start, steady = rms(samples[onset:onset + 3 * step]), statistics.median(later)
+            levels.append(f"{20 * math.log10(max(start, 1) / max(steady, 1)):.1f}")
+        if letter != "-":
+            last = letter
+    return " ".join(levels)
+
+
 def main():
     path, raw = sys.argv[1], "--raw" in sys.argv[2:]
     if "--mp3-frames" in sys.argv[2:]:
@@ -67,6 +96,9 @@ def main():
         capture_output=True,
     ).stdout
     samples = [int.from_bytes(pcm[i:i + 2], "little", signed=True) for i in range(0, len(pcm) - 1, 2)]
+    if "--fade-in" in sys.argv[2:]:
+        print(fade_in(samples))
+        return
     letters = [classify(samples[i:i + WINDOW]) for i in range(0, len(samples) - WINDOW + 1, WINDOW)]
     if raw:
         print("".join(letters))
