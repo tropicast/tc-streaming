@@ -11,7 +11,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Fixed
 
-- Directory metadata reached RadioBrowser only while a DJ was live (#107): a listener on an idle live mount gets the AutoDJ fallback mount's headers, which had none (`icy-name: AutoDJ`, no `icy-index-metadata`). The `autodj.<fmt>` mounts now send the station's directory headers and name too, so a listing updates whatever is on air. Applied by the next `stations.json` push, no restart.
+- Directory metadata reached RadioBrowser only while a DJ was live (#107): a listener on an idle live mount gets the AutoDJ fallback mount's headers, which had none (`icy-name: AutoDJ`, no `icy-index-metadata`). The `autodj.<fmt>` mounts now send the station's directory headers and name too, so a listing updates whatever is on air. Deploying it restarts Icecast (a new image): listeners and sources reconnect.
 
 ### Added
 
