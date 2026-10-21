@@ -136,6 +136,16 @@ loki.process "icecast" {
     drop_counter_reason = "icecast_noise"
   }
 
+  // A listener on a live mount without a source (#113): Icecast looks for a
+  // static file of that name (INFO, WARN). Players often send no Accept
+  // header, which Icecast cannot parse when it picks the format of its 404
+  // page (EROR, harmless, logged for any error page and never names a mount).
+  // The access line stays, at level info.
+  stage.drop {
+    expression          = `fserve/fserve_client_create .*/stations/[A-Za-z0-9-]+/live\.(mp3|opus)|util/util_http_select_best Input string does not parse as KVA`
+    drop_counter_reason = "icecast_off_air"
+  }
+
   // Secrets never leave the node. Icecast 2.5 strips query strings from the
   // access log, but other lines may carry a URL, a header, JSON or XML
   // verbatim. Each capture group is replaced.
@@ -204,10 +214,16 @@ loki.process "icecast" {
       expression = `^(?P<mount>/stations/(?P<station>[^/?]+)/[^?]+)`
     }
 
-    // 4xx (rejected source, wrong admin password) shows as a warning.
+    stage.regex {
+      source     = "path"
+      expression = `^/stations/[^/?]+/(?P<live_mount>live)\.(mp3|opus)$`
+    }
+
+    // 4xx (rejected source, wrong admin password) shows as a warning, except
+    // a listener's 404 on a live mount: the station is off air (#113).
     stage.template {
       source   = "level"
-      template = `{{ if eq .status_class "5" }}error{{ else if eq .status_class "4" }}warn{{ else }}info{{ end }}`
+      template = `{{ if eq .status_class "5" }}error{{ else if and (eq .status "404") .live_mount (or (eq .method "GET") (eq .method "HEAD")) }}info{{ else if eq .status_class "4" }}warn{{ else }}info{{ end }}`
     }
 
     stage.static_labels {

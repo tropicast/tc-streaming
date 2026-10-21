@@ -148,6 +148,19 @@ check "rejected source is a 401 access line at level warn" 1 \
 check "Icecast startup is an error-log line at level info" 1 \
     "$(logs_until "$(icecast_logs ', log_type="error", level="info"') |= \"server started\" | module=\"main\"" 1)"
 
+# Off air (#113): a player on a mount without a source, with no Accept header
+# (as AirPlay or SimpleRadio). Icecast logs a static file lookup and an Accept
+# parse error; only the access line is shipped.
+curl -s -o /dev/null -H 'Accept:' "http://127.0.0.1:$port/stations/77/live.mp3" || true
+check "off-air request is an access line at level info" 1 \
+    "$(logs_until "$(icecast_logs ', log_type="access", level="info"') | status=\"404\" | mount=\"/stations/77/live.mp3\"" 1)"
+check "Icecast logs the off-air file lookup and Accept parse error" 2 \
+    "$(compose logs icecast | grep -cE 'WARN fserve/fserve_client_create .*/stations/77/live\.mp3|does not parse as KVA' || true)"
+check "off-air file lookup is not shipped" 0 "$(logs_count "$(icecast_logs) |= \"fserve_client_create\"")"
+check "Accept parse error is not shipped" 0 "$(logs_count "$(icecast_logs) |= \"does not parse as KVA\"")"
+check "off-air request leaves no error or warning" 0 \
+    "$(logs_count "$(icecast_logs ', level=~"error|warn"') | station=\"77\"")"
+
 # Secrets are redacted before they leave the node. Icecast strips query
 # strings itself, so write such lines to its stdout directly (it is PID 1).
 leak=leak-$(openssl rand -hex 8)

@@ -95,6 +95,17 @@
 			# Caddy does this for any response without Content-Length
 			# anyway; a longer interval has no effect (#37).
 			flush_interval -1
+
+			# A mount without a source (no DJ, no AutoDJ) gets Icecast's
+			# "file not found" XML. Players and directories get a plain
+			# "off air, retry later" instead (#113). Icecast answers the
+			# same for a station it does not know, so that is a 503 too.
+			@off_air status 404
+			handle_response @off_air {
+				header Retry-After 60
+				header Content-Type "text/plain; charset=utf-8"
+				respond "Station off air. Try again later." 503
+			}
 		}
 	}
 
