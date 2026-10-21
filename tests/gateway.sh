@@ -104,6 +104,16 @@ check "HTTP redirects to HTTPS" 308 "$(status "http://listen.localhost:$http_por
 check "CORS preflight succeeds" 204 "$(status -X OPTIONS "$listen/stations/42/live.mp3")"
 check "wrong credential is rejected" 401 "$(publish 42:wrong 3)"
 
+# Off air (#113): no source yet on 42's mount, which has no AutoDJ.
+off_air=$(curl -s -D - -o "$work/off-air.body" --cacert "$ca" "${pin[@]}" \
+    -w '%{http_code}' "$listen/stations/42/live.mp3" || true)
+check "off-air mount answers 503" 503 "${off_air: -3}"
+check "off-air answer asks to retry" yes "$(grep -qi '^retry-after: 60' <<<"$off_air" && echo yes || echo no)"
+check "off-air answer is plain text" yes "$(grep -qi '^content-type: text/plain' <<<"$off_air" && echo yes || echo no)"
+check "off-air answer keeps CORS" yes "$(grep -qi '^access-control-allow-origin: \*' <<<"$off_air" && echo yes || echo no)"
+check "off-air answer says so" "Station off air. Try again later." "$(cat "$work/off-air.body")"
+check "off-air Opus mount answers 503" 503 "$(status "$listen/stations/42/live.opus")"
+
 for method in PUT SOURCE; do
     publish "42:$secret" 8 "$method" >/dev/null &
     sleep 3

@@ -27,6 +27,11 @@ The two hosts work differently:
   ([contract](../source-auth.md#metadata-updates)). No other admin command
   passes.
 
+- A station mount with no source (no DJ live, no AutoDJ) answers `503`
+  with `Retry-After: 60` and the plain-text body `Station off air. Try
+  again later.` instead of Icecast's 404 XML (#113). Icecast cannot tell an
+  off-air station from one it does not know, so an unknown station ID gets
+  the same answer.
 - Streams are proxied with `flush_interval -1`, so audio is never
   buffered. Caddy sets no timeout on long-lived streams.
 - Admin and status pages are never reachable from outside; the only admin

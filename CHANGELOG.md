@@ -16,6 +16,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 ### Fixed
 
+- Off-air stations no longer look broken (#113). A player asking for a station mount with no source got Icecast's 404 XML ("The file you requested could not be found"), and every request logged an `EROR` and two `WARN` lines. Caddy now answers `503` with `Retry-After: 60` and a plain-text "Station off air" body; Alloy drops Icecast's file-lookup and Accept-parse lines and ships the 404 access line at level `info`. Unknown station IDs get the same `503`. Deploying it reloads Caddy in place and restarts Alloy: no listener disconnects.
 - Directory metadata reached RadioBrowser only while a DJ was live (#107): a listener on an idle live mount gets the AutoDJ fallback mount's headers, which had none (`icy-name: AutoDJ`, no `icy-index-metadata`). The `autodj.<fmt>` mounts now send the station's directory headers and name too, so a listing updates whatever is on air. Deploying it restarts Icecast (a new image): listeners and sources reconnect.
 
 ### Added

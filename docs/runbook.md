@@ -239,6 +239,13 @@ Two warnings are expected and need no action, both once per Icecast start:
 (Icecast 2.5 has no MP3-specific handler; MP3 plays normally). Any other
 `WARN` is worth a look.
 
+A player asking for an off-air station (no DJ, no AutoDJ) is normal, often
+from a directory listing (#113). Icecast logs `fserve/fserve_client_create`
+lines for it, and `EROR util/util_http_select_best Input string does not
+parse as KVA` when the player sends no `Accept` header. Alloy drops them;
+only the access line (`404`, level `info`) reaches Grafana. The listener
+gets a `503` from Caddy.
+
 On the node (also for Caddy, whose logs are not shipped yet):
 
 ```sh
