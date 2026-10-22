@@ -15,7 +15,8 @@
 #   stations.json        station limits (#8), from the control plane
 #   releases/<sha>/      copy of each deployed bundle, for rollback; its
 #                        release.env holds ICECAST_IMAGE_TAG, CADDY_IMAGE_TAG,
-#                        PLAYOUT_IMAGE_TAG (#63) and RELEASE_VERSION
+#                        PLAYOUT_IMAGE_TAG (#63), RELEASE_VERSION and
+#                        STREAMING_REGISTRY (older releases: ghcr.io/tropicast)
 #   CURRENT, PREVIOUS    "<git-sha> <icecast-image-tag>" of the active and
 #                        prior release
 #
@@ -68,7 +69,7 @@ install_bundle() {
 # only pin the Icecast tag (their compose file uses the stock Caddy image).
 load_release() {
     local sha=$1 fallback_tag=${2:-}
-    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG PLAYOUT_IMAGE_TAG TC_STREAMING_VERSION
+    unset ICECAST_IMAGE_TAG CADDY_IMAGE_TAG PLAYOUT_IMAGE_TAG TC_STREAMING_VERSION STREAMING_REGISTRY
     if [[ -f releases/$sha/release.env ]]; then
         ICECAST_IMAGE_TAG=$(sed -n 's/^ICECAST_IMAGE_TAG=//p' "releases/$sha/release.env")
         CADDY_IMAGE_TAG=$(sed -n 's/^CADDY_IMAGE_TAG=//p' "releases/$sha/release.env")
@@ -76,13 +77,18 @@ load_release() {
         TC_STREAMING_VERSION=$(sed -n 's/^RELEASE_VERSION=//p' "releases/$sha/release.env")
         # AutoDJ playout image (#63); releases before it have none.
         PLAYOUT_IMAGE_TAG=$(sed -n 's/^PLAYOUT_IMAGE_TAG=//p' "releases/$sha/release.env")
+        # GitLab's registry (tropicast/tc-devops#1); releases before it use GHCR.
+        STREAMING_REGISTRY=$(sed -n 's/^STREAMING_REGISTRY=//p' "releases/$sha/release.env")
         export CADDY_IMAGE_TAG
         [[ -z $PLAYOUT_IMAGE_TAG ]] || export PLAYOUT_IMAGE_TAG
     else
         ICECAST_IMAGE_TAG=$fallback_tag
     fi
     [[ -n $ICECAST_IMAGE_TAG ]] || { log "release $sha has no image tags"; exit 1; }
-    export ICECAST_IMAGE_TAG
+    STREAMING_REGISTRY=${STREAMING_REGISTRY:-ghcr.io/tropicast}
+    [[ $STREAMING_REGISTRY =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] ||
+        { log "release $sha has no valid registry"; exit 1; }
+    export ICECAST_IMAGE_TAG STREAMING_REGISTRY
     export TC_STREAMING_VERSION=${TC_STREAMING_VERSION:-0.0.0} TC_STREAMING_REVISION=$sha
 }
 

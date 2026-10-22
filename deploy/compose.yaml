@@ -5,7 +5,8 @@ name: tc-streaming
 
 services:
   icecast:
-    image: ghcr.io/tropicast/icecast:${ICECAST_IMAGE_TAG:?ICECAST_IMAGE_TAG is set by deploy.sh}
+    # STREAMING_REGISTRY and the tags come from the release (deploy.sh).
+    image: ${STREAMING_REGISTRY:-ghcr.io/tropicast}/icecast:${ICECAST_IMAGE_TAG:?ICECAST_IMAGE_TAG is set by deploy.sh}
     restart: unless-stopped
     environment:
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?}
@@ -26,7 +27,7 @@ services:
   caddy:
     # Caddy with the layer4 module (caddy/Dockerfile): the ingest host
     # passes raw Icecast source streams through after TLS.
-    image: ghcr.io/tropicast/caddy:${CADDY_IMAGE_TAG:?CADDY_IMAGE_TAG is set by deploy.sh}
+    image: ${STREAMING_REGISTRY:-ghcr.io/tropicast}/caddy:${CADDY_IMAGE_TAG:?CADDY_IMAGE_TAG is set by deploy.sh}
     restart: unless-stopped
     depends_on:
       icecast:
@@ -72,7 +73,7 @@ services:
   # Restarting it drops the listeners who are on AutoDJ at that moment.
   playout:
     profiles: ["autodj"]
-    image: ghcr.io/tropicast/playout:${PLAYOUT_IMAGE_TAG:-unset}
+    image: ${STREAMING_REGISTRY:-ghcr.io/tropicast}/playout:${PLAYOUT_IMAGE_TAG:-unset}
     restart: unless-stopped
     depends_on:
       icecast:
