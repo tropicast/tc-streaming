@@ -452,8 +452,10 @@ each workflow to its jobs. Differences:
    `STATION_LIMITS`), which GitLab can't mask. Values of the GitHub variables:
    `gh variable list --json name,value`; secret values come from your password
    manager.
-2. **Environment** `production`, protected (*Settings > CI/CD > Protected
-   environments*): Maintainers deploy.
+2. **Environment** `production` (*Operate > Environments*). GitLab CE has no
+   protected environments: what guards production is that its variables are
+   Protected (only `main` and protected tags get them) and that only
+   Maintainers push or merge to `main`.
 3. **Protected tags** (*Settings > Repository*): `v*`, Maintainers create.
 4. **Images of the current main**: *Build > Pipelines > Run pipeline* on main.
    It builds and pushes the three images under the tags a deploy of main looks
