@@ -65,7 +65,8 @@ variables:
     - apk add --no-cache bash curl git openssl >/dev/null
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - tag=tc-streaming-$IMAGE_NAME:ci-$CI_JOB_ID
-    - trap 'docker rm -f "$tag-smoke" >/dev/null 2>&1; docker rmi -f "$tag" "$tag-prod" >/dev/null 2>&1' EXIT
+    - smoke=$IMAGE_NAME-smoke-$CI_JOB_ID
+    - trap 'docker rm -f "$smoke" >/dev/null 2>&1; docker rmi -f "$tag" "$tag-prod" >/dev/null 2>&1' EXIT
     - docker build -t "$tag" "$IMAGE_CONTEXT"
 
 .image-publish:
@@ -99,18 +100,18 @@ image:icecast:
   script:
     # Healthy, and the status page answers.
     - >
-      docker run -d --name "$tag-smoke"
+      docker run -d --name "$smoke"
       -e ICECAST_SOURCE_PASSWORD="$(openssl rand -hex 24)" -e ICECAST_ADMIN_PASSWORD="$(openssl rand -hex 24)"
       -e ICECAST_SOURCE_AUTH_URL=http://127.0.0.1:9/unused -e ICECAST_SOURCE_AUTH_USER=icecast
       -e ICECAST_SOURCE_AUTH_PASSWORD="$(openssl rand -hex 24)" -p 127.0.0.1::8000 "$tag" >/dev/null
-    - addr=$(docker port "$tag-smoke" 8000/tcp | head -1)
+    - addr=$(docker port "$smoke" 8000/tcp | head -1)
     - |
       healthy=""
       for _ in $(seq 1 30); do
-        if [ "$(docker inspect -f '{{.State.Health.Status}}' "$tag-smoke")" = healthy ]; then healthy=1; break; fi
+        if [ "$(docker inspect -f '{{.State.Health.Status}}' "$smoke")" = healthy ]; then healthy=1; break; fi
         sleep 2
       done
-      [ -n "$healthy" ] || { docker logs "$tag-smoke"; exit 1; }
+      [ -n "$healthy" ] || { docker logs "$smoke"; exit 1; }
     - curl --fail --silent --output /dev/null "http://$addr/status-json.xsl"
     - !reference [.image-publish, script]
 

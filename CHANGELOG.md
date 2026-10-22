@@ -17,6 +17,11 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 
 - The Caddy image cross-compiles for the target platform (`caddy/Dockerfile`), so the arm64 GitLab runner builds the x86 image without emulation. Its tag changes, so the next deploy restarts Caddy: connections drop for a few seconds.
 
+### Fixed
+
+- The load generator (`tools/loadtest`) no longer races its own shutdown: listeners are counted before the ramp starts, so `wg.Wait` never runs while the ramp adds one (found by the GitLab SAST job).
+- Security scan findings accepted with a reason: Icecast's entrypoint parses the config it rendered itself (`nosemgrep` on the XML parse), and Caddy still runs as root (`.trivyignore`; #119 changes that). The entrypoint change is a comment, but it changes the Icecast image: the next deploy restarts Icecast.
+
 ## [0.2.0] - 2026-10-21
 
 ### Changed
