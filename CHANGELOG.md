@@ -7,6 +7,21 @@ When releasing, rename `Unreleased` to the version (for example `## [0.2.0] - 20
 new empty `Unreleased` section. The release workflow requires that section and publishes it above the
 auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#releasing).
 
+## [Unreleased]
+
+### Added
+
+- GitLab CI (#117): `.gitlab-ci.yml` runs the GitHub workflows' image builds, e2e tests, lints, releases, deploys and Terraform on the self-hosted GitLab, plus the shared security jobs. Images go to the GitLab registry; `deploy.sh` reads the registry from the release (`STREAMING_REGISTRY`, GHCR for older releases). The first deploy from GitLab restarts Icecast, Caddy and playout, because the image names change. Setup: [runbook, GitLab CI](docs/runbook.md#gitlab-ci).
+
+### Changed
+
+- The Caddy image cross-compiles for the target platform (`caddy/Dockerfile`), so the arm64 GitLab runner builds the x86 image without emulation. Its tag changes, so the next deploy restarts Caddy: connections drop for a few seconds.
+
+### Fixed
+
+- The load generator (`tools/loadtest`) no longer races its own shutdown: listeners are counted before the ramp starts, so `wg.Wait` never runs while the ramp adds one (found by the GitLab SAST job).
+- Security scan findings accepted with a reason: Icecast's entrypoint parses the config it rendered itself (`nosemgrep` on the XML parse), and Caddy still runs as root (`.trivyignore`; #119 changes that). The entrypoint change is a comment, but it changes the Icecast image: the next deploy restarts Icecast.
+
 ## [0.2.0] - 2026-10-21
 
 ### Changed

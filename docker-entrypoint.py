@@ -283,7 +283,8 @@ def reload_stations():
     sources stay connected.
     """
     os.umask(0o077)
-    tree = ET.parse(RUNTIME_CONFIG)
+    # The config this entrypoint rendered itself (trusted, not user input).
+    tree = ET.parse(RUNTIME_CONFIG)  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
     stations = load_stations()
     apply_station_limits(tree, stations)
     write_config(tree)

@@ -1,0 +1,481 @@
+# GitLab CI (#117, tropicast/tc-devops#1). Ports .github/workflows, which
+# stay until the move to GitLab (tropicast/tc-devops#7):
+#
+#   image.yml, caddy-image.yml,  image:icecast, image:caddy, image:playout
+#   playout-image.yml
+#   e2e.yml                      e2e, monitoring
+#   deploy-lint.yml              deploy-lint
+#   ansible.yml                  ansible-lint
+#   terraform.yml                terraform:validate
+#   release.yml                  release:verify, release:images, release:publish
+#   deploy.yml                   deploy
+#   terraform-deploy.yml         terraform:plan, terraform:apply
+#
+# plus the shared security jobs (tc-devops ci/security.yml). Jobs tagged
+# docker-host get the node's Docker, on the host's network (tc-devops
+# docs/runbook.md, Runners). Setup: docs/runbook.md, GitLab CI.
+
+stages: [test, build, scan, release, deploy]
+
+include:
+  - project: tropicast/tc-devops
+    ref: main
+    file: ci/security.yml
+
+# Merge requests, the default branch, release tags and manual runs. A branch
+# with an open merge request runs only the merge request pipeline.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web"
+  auto_cancel:
+    on_new_commit: interruptible
+
+variables:
+  DOCKER_IMAGE: docker:29-cli
+  TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+  # Published as $CI_REGISTRY_IMAGE/icecast, /caddy and /playout, for the x86
+  # streaming node. The runner is arm64: Caddy cross-compiles, Icecast and
+  # playout build under QEMU (tc-devops#27); smoke tests run a native build.
+  IMAGE_PLATFORM: linux/amd64
+
+.docker-host:
+  tags: [docker-host]
+
+# --- Images (image.yml, caddy-image.yml, playout-image.yml) ---------------------
+
+# Build, smoke test (native build), scan the production build for critical
+# vulnerabilities with a fix, and on the default branch push it as
+# sha-<last commit that changed IMAGE_PATHS>: the tag deploys look for. A
+# manual pipeline (Run pipeline) builds all three, to publish the images of
+# commits from before GitLab. Keep IMAGE_PATHS identical to deploy/ci-deploy.sh.
+.image:
+  extends: .docker-host
+  stage: build
+  image: $DOCKER_IMAGE
+  interruptible: true
+  needs: []
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - apk add --no-cache bash curl git openssl >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - tag=tc-streaming-$IMAGE_NAME:ci-$CI_JOB_ID
+    - smoke=$IMAGE_NAME-smoke-$CI_JOB_ID
+    - trap 'docker rm -f "$smoke" >/dev/null 2>&1; docker rmi -f "$tag" "$tag-prod" >/dev/null 2>&1' EXIT
+    - docker build -t "$tag" "$IMAGE_CONTEXT"
+
+.image-publish:
+  script:
+    - docker build --platform "$IMAGE_PLATFORM" -t "$tag-prod" "$IMAGE_CONTEXT"
+    - >
+      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/trivy "$TRIVY_IMAGE"
+      image --platform "$IMAGE_PLATFORM" --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$tag-prod"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        source_sha=$(git log -1 --first-parent --format=%H HEAD -- $IMAGE_PATHS)
+        target=$CI_REGISTRY_IMAGE/$IMAGE_NAME:sha-$source_sha
+        printf '%s' "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+        docker tag "$tag-prod" "$target"
+        docker push -q "$target"
+        docker rmi "$target" >/dev/null
+        docker logout "$CI_REGISTRY" >/dev/null
+      fi
+
+image:icecast:
+  extends: .image
+  variables:
+    IMAGE_NAME: icecast
+    IMAGE_CONTEXT: .
+    IMAGE_PATHS: Dockerfile docker-entrypoint.py icecast.xml .dockerignore
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - changes: [Dockerfile, docker-entrypoint.py, icecast.xml, .dockerignore, .gitlab-ci.yml]
+  script:
+    # Healthy, and the status page answers.
+    - >
+      docker run -d --name "$smoke"
+      -e ICECAST_SOURCE_PASSWORD="$(openssl rand -hex 24)" -e ICECAST_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+      -e ICECAST_SOURCE_AUTH_URL=http://127.0.0.1:9/unused -e ICECAST_SOURCE_AUTH_USER=icecast
+      -e ICECAST_SOURCE_AUTH_PASSWORD="$(openssl rand -hex 24)" -p 127.0.0.1::8000 "$tag" >/dev/null
+    - addr=$(docker port "$smoke" 8000/tcp | head -1)
+    - |
+      healthy=""
+      for _ in $(seq 1 30); do
+        if [ "$(docker inspect -f '{{.State.Health.Status}}' "$smoke")" = healthy ]; then healthy=1; break; fi
+        sleep 2
+      done
+      [ -n "$healthy" ] || { docker logs "$smoke"; exit 1; }
+    - curl --fail --silent --output /dev/null "http://$addr/status-json.xsl"
+    - !reference [.image-publish, script]
+
+image:caddy:
+  extends: .image
+  variables:
+    IMAGE_NAME: caddy
+    IMAGE_CONTEXT: caddy
+    IMAGE_PATHS: caddy/Dockerfile caddy/.dockerignore
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - changes: [caddy/Dockerfile, caddy/.dockerignore, .gitlab-ci.yml]
+  script:
+    # The layer4 module is built in.
+    - docker run --rm "$tag" caddy list-modules | grep -qx 'layer4.handlers.proxy'
+    - !reference [.image-publish, script]
+
+image:playout:
+  extends: .image
+  variables:
+    IMAGE_NAME: playout
+    IMAGE_CONTEXT: playout
+    IMAGE_PATHS: playout
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - changes: [playout/**/*, .gitlab-ci.yml]
+  script:
+    # The supervisor starts and refuses to run without its settings; Liquidsoap
+    # has the FFmpeg encoders the generated scripts use.
+    - out=$(docker run --rm "$tag" 2>&1 || true)
+    - echo "$out" | grep -q 'PLAYOUT_URL must be set' || { echo "$out"; exit 1; }
+    - |
+      printf '%s\n' \
+        'output.dummy(fallible=true, single("/dev/null"))' \
+        'output.file(%ffmpeg(format="mp3", %audio(codec="libmp3lame", b="128k", ar=44100, ac=1)), "/tmp/a.mp3", mean(sine()))' \
+        'output.file(%ffmpeg(format="ogg", page_duration=100000, %audio(codec="libopus", b="64k", ar=48000, ac=2)), "/tmp/a.ogg", sine())' |
+        docker run --rm -i --entrypoint sh "$tag" -c 'cat > /tmp/t.liq && liquidsoap --check /tmp/t.liq'
+    - !reference [.image-publish, script]
+
+# --- E2E (e2e.yml) --------------------------------------------------------------
+
+# Source auth (#7), gateway (#6), station limits (#8), AutoDJ playout (#63),
+# handoff (#64), latency (#84) and monitoring (#10) in one job: the images
+# are built once. Image tags, Compose projects and ports are unique per run.
+e2e:
+  extends: .docker-host
+  stage: test
+  image: $DOCKER_IMAGE
+  interruptible: true
+  timeout: 45 minutes
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - changes:
+        - Dockerfile
+        - docker-entrypoint.py
+        - icecast.xml
+        - .dockerignore
+        - caddy/**/*
+        - compose.yaml
+        - auth-stub/**/*
+        - playout/**/*
+        - tests/**/*
+        - exporter/**/*
+        - deploy/alloy/**/*
+        - monitoring/**/*
+        - deploy/stations.example.json
+        - .gitlab-ci.yml
+  variables:
+    E2E_PREBUILT: "1"
+    TEST_RUN_ID: $CI_JOB_ID
+    ICECAST_IMAGE: tropicast-icecast:e2e-$CI_JOB_ID
+    CADDY_IMAGE: tropicast-caddy:e2e-$CI_JOB_ID
+    PLAYOUT_IMAGE: tropicast-playout:e2e-$CI_JOB_ID
+  before_script:
+    - apk add --no-cache bash coreutils curl ffmpeg openssl python3 >/dev/null
+    - trap 'docker rmi -f "$ICECAST_IMAGE" "$CADDY_IMAGE" "$PLAYOUT_IMAGE" >/dev/null 2>&1' EXIT
+    - docker build -q -t "$ICECAST_IMAGE" . >/dev/null
+    - docker build -q -t "$CADDY_IMAGE" caddy >/dev/null
+    - docker build -q -t "$PLAYOUT_IMAGE" playout >/dev/null
+  script:
+    - tests/source-auth.sh
+    - tests/gateway.sh
+    - tests/station-limits.sh
+    - tests/playout.sh
+    - tests/autodj.sh
+    - tests/latency.sh
+    - tests/monitoring.sh
+
+# Alert rule unit tests.
+monitoring:
+  stage: test
+  image:
+    name: prom/prometheus:v3.15.0
+    entrypoint: [""]
+  interruptible: true
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes: [monitoring/**/*, .gitlab-ci.yml]
+  script:
+    - cd monitoring && promtool test rules rules.test.yaml
+
+# --- Deploy files, Ansible, Terraform (deploy-lint.yml, ansible.yml, terraform.yml)
+
+deploy-lint:
+  stage: test
+  image: $DOCKER_IMAGE
+  interruptible: true
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes: [deploy/**/*, tests/*.sh, .gitlab-ci.yml]
+  script:
+    - apk add --no-cache bash shellcheck python3 >/dev/null
+    - shellcheck deploy/*.sh tests/*.sh
+    # deploy.sh restarts services whose files changed.
+    - tests/deploy-reload.sh
+    # The production Compose file.
+    - env_file=$(mktemp)
+    - |
+      for name in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD ICECAST_RELAY_PASSWORD \
+                  ICECAST_SOURCE_AUTH_URL ICECAST_SOURCE_AUTH_USER ICECAST_SOURCE_AUTH_PASSWORD \
+                  LISTEN_HOST INGEST_HOST ACME_EMAIL; do
+        echo "$name=placeholder" >> "$env_file"
+      done
+    - >
+      ICECAST_IMAGE_TAG=sha-test CADDY_IMAGE_TAG=sha-test PLAYOUT_IMAGE_TAG=sha-test
+      docker compose -f deploy/compose.yaml --env-file "$env_file" --profile stub --profile autodj config --quiet
+
+ansible-lint:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  interruptible: true
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes: [infra/ansible/**/*, .gitlab-ci.yml]
+  script:
+    - cd infra/ansible
+    # Versions pinned in requirements.txt.
+    - uvx --with-requirements requirements.txt ansible-lint site.yml
+
+.terraform:
+  image:
+    name: hashicorp/terraform:1.16.5
+    entrypoint: [""]
+  variables:
+    TF_IN_AUTOMATION: "1"
+    TF_INPUT: "0"
+
+# The streaming node, and the load generator of the load tests (#96).
+terraform:validate:
+  extends: .terraform
+  stage: test
+  interruptible: true
+  parallel:
+    matrix:
+      - DIR: [infra/terraform, infra/loadgen]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes: [infra/terraform/**/*, infra/loadgen/**/*, .gitlab-ci.yml]
+  script:
+    - cd "$DIR"
+    - terraform fmt -check -recursive
+    - terraform init -backend=false
+    - terraform validate
+
+# --- Release (release.yml) ------------------------------------------------------
+
+# Push a tag such as v0.1.0 (or v0.1.0-rc.1) on a commit that is on the
+# default branch (#59). The tag is the only place the version is set. The
+# images the default branch built for that commit (sha-<commit>) are tagged
+# <version> again: the same digests, nothing is rebuilt. :latest moves for
+# non-pre-release tags only. Then a GitLab Release with the CHANGELOG.md
+# section as notes. Deploying stays manual: the deploy job of the tag's
+# pipeline; the exporter then reports the version (tc_streaming_build_info).
+.release:
+  rules:
+    - if: $CI_COMMIT_TAG
+
+release:verify:
+  extends: .release
+  stage: test
+  image: alpine:3.24
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - apk add --no-cache bash curl git python3 >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - |
+      bash -euo pipefail <<'SH'
+      tag=$CI_COMMIT_TAG
+      if [[ ! $tag =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+        echo "Tag '$tag' must look like v1.2.3 or v1.2.3-rc.1." >&2; exit 1
+      fi
+      core=${BASH_REMATCH[1]}
+      git fetch -q origin "$CI_DEFAULT_BRANCH"
+      git merge-base --is-ancestor "$CI_COMMIT_SHA" FETCH_HEAD || { echo "Tag $tag is not on $CI_DEFAULT_BRANCH." >&2; exit 1; }
+      # Pre-release tags use their base version's section.
+      grep -Eq "^## \[${core//./\\.}\]" CHANGELOG.md ||
+        { echo "CHANGELOG.md has no '## [$core]' section. Rename Unreleased to it before tagging." >&2; exit 1; }
+      # The same rule as deploy/ci-deploy.sh: each image is the one of the last commit that changed it.
+      icecast_sha=$(git log -1 --first-parent --format=%H HEAD -- Dockerfile docker-entrypoint.py icecast.xml .dockerignore)
+      caddy_sha=$(git log -1 --first-parent --format=%H HEAD -- caddy/Dockerfile caddy/.dockerignore)
+      playout_sha=$(git log -1 --first-parent --format=%H HEAD -- playout)
+      {
+        echo "VERSION=${tag#v}"
+        echo "ICECAST_TAG=sha-$icecast_sha"
+        echo "CADDY_TAG=sha-$caddy_sha"
+        echo "PLAYOUT_TAG=${playout_sha:+sha-$playout_sha}"
+      } > release.env
+      # The exporter reports the version.
+      export TC_STREAMING_VERSION=${tag#v} TC_STREAMING_REVISION=$CI_COMMIT_SHA ICECAST_URL=http://127.0.0.1:9
+      python3 -I exporter/icecast_exporter.py &
+      pid=$!
+      trap 'kill $pid' EXIT
+      expected="tc_streaming_build_info{version=\"$TC_STREAMING_VERSION\",revision=\"$CI_COMMIT_SHA\"} 1"
+      for _ in $(seq 1 20); do
+        metrics=$(curl -fs http://127.0.0.1:9100/metrics) && break
+        sleep 0.5
+      done
+      grep -qxF "$expected" <<< "${metrics:-}" || { echo "The exporter does not report: $expected" >&2; exit 1; }
+      echo "$expected"
+      SH
+  artifacts:
+    reports:
+      dotenv: release.env
+
+# crane adds a tag to an existing manifest without rewriting it, so the
+# digest stays the same.
+release:images:
+  extends: .release
+  stage: release
+  image:
+    name: gcr.io/go-containerregistry/crane/debug:v0.21.0
+    entrypoint: [""]
+  needs: [release:verify]
+  script:
+    - crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
+    - |
+      retag() {
+        image=$CI_REGISTRY_IMAGE/$1 source_tag=$2
+        # A tag pushed right after a merge may race the image build of the default branch: wait up to 30 minutes.
+        for _ in $(seq 1 60); do
+          crane digest "$image:$source_tag" >/dev/null 2>&1 && break
+          echo "waiting for $image:$source_tag"
+          sleep 30
+        done
+        digest=$(crane digest "$image:$source_tag") ||
+          { echo "$image:$source_tag does not exist. Did its image job fail on the default branch?"; exit 1; }
+        crane tag "$image:$source_tag" "$VERSION"
+        case $VERSION in *-*) ;; *) crane tag "$image:$source_tag" latest ;; esac
+        [ "$(crane digest "$image:$VERSION")" = "$digest" ] ||
+          { echo "$image:$VERSION is not the same image as $source_tag."; exit 1; }
+        echo "$image:$VERSION = $image:$source_tag ($digest)"
+      }
+      retag icecast "$ICECAST_TAG"
+      retag caddy "$CADDY_TAG"
+      if [ -n "$PLAYOUT_TAG" ]; then retag playout "$PLAYOUT_TAG"; fi
+
+# GitLab has no draft releases: the release is public to project members as
+# soon as it is created. Pre-releases say so in their name.
+release:publish:
+  extends: .release
+  stage: release
+  image: alpine:3.24
+  needs: [release:verify, release:images]
+  script:
+    - apk add --no-cache curl jq >/dev/null
+    - core=${VERSION%%-*}
+    - name="Tropicast Streaming $VERSION"
+    - case $VERSION in *-*) name="$name (pre-release)" ;; esac
+    - awk -v v="$core" '/^## \[/ { on = index($0, "[" v "]") > 0; next } on' CHANGELOG.md > notes.md
+    - |
+      {
+        cat notes.md
+        echo
+        printf '**Images:** `%s` (= `%s`), `%s` (= `%s`)' \
+          "$CI_REGISTRY_IMAGE/icecast:$VERSION" "$ICECAST_TAG" "$CI_REGISTRY_IMAGE/caddy:$VERSION" "$CADDY_TAG"
+        if [ -n "$PLAYOUT_TAG" ]; then printf ', `%s` (= `%s`)' "$CI_REGISTRY_IMAGE/playout:$VERSION" "$PLAYOUT_TAG"; fi
+        echo
+        echo
+        echo "Deploy: run the **deploy** job of this tag's pipeline."
+      } > release-notes.md
+    - >
+      jq -n --arg tag "$CI_COMMIT_TAG" --arg name "$name" --rawfile description release-notes.md
+      '{tag_name: $tag, name: $name, description: $description}' |
+      curl -fsS -X POST -H "JOB-TOKEN: $CI_JOB_TOKEN" -H "Content-Type: application/json" --data @-
+      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases" >/dev/null
+
+# --- Deploy (deploy.yml, terraform-deploy.yml) ----------------------------------
+
+# Production, by hand, after every check of the pipeline: the commit of a
+# default-branch pipeline or of a release tag. Roll back by running an older
+# pipeline's deploy job again. On docker-host: `docker login` needs a daemon.
+# Variables: docs/runbook.md, GitLab CI.
+deploy:
+  extends: .docker-host
+  stage: deploy
+  image: $DOCKER_IMAGE
+  resource_group: production
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
+      when: manual
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  environment:
+    name: production
+    url: https://$LISTEN_HOST
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - apk add --no-cache bash openssh-client curl jq python3 git >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - bash deploy/ci-deploy.sh
+
+# Plan, read it in the job log, then apply exactly that plan; the apply
+# refuses it if the state changed. The resource group is the state's lock
+# (no locking on the bucket), so two runs never overlap. Variables: TFVARS,
+# TF_STATE_BUCKET, TF_STATE_LOCATION, TF_STATE_ACCESS_KEY,
+# TF_STATE_SECRET_KEY, HCLOUD_TOKEN.
+.terraform:production:
+  extends: .terraform
+  stage: deploy
+  resource_group: terraform-production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  variables:
+    AWS_ACCESS_KEY_ID: $TF_STATE_ACCESS_KEY
+    AWS_SECRET_ACCESS_KEY: $TF_STATE_SECRET_KEY
+    STATE_BUCKET: $TF_STATE_BUCKET
+    STATE_LOCATION: $TF_STATE_LOCATION
+  before_script:
+    - cd infra/terraform
+    - sh ./ci-config.sh
+    - terraform init -backend-config=backend.hcl
+
+terraform:plan:
+  extends: .terraform:production
+  environment:
+    name: production
+    action: prepare
+  script:
+    - terraform plan -out=tfplan
+  artifacts:
+    # The plan holds the variables' values: developers and up only.
+    access: developer
+    expire_in: 3 days
+    paths: [infra/terraform/tfplan]
+
+terraform:apply:
+  extends: .terraform:production
+  needs: [terraform:plan]
+  environment:
+    name: production
+    action: access
+  script:
+    - terraform apply tfplan
+    - terraform output

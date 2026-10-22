@@ -190,23 +190,29 @@ func main() {
 	for i := range per {
 		per[i] = &stats{}
 	}
+	// Every listener is counted before the ramp starts, so wg.Wait below never
+	// races a wg.Add; the ones the ramp never starts (interrupted) are done here.
 	var wg sync.WaitGroup
+	wg.Add(total)
 	go func() { // ramp: start listeners evenly over -ramp, interleaving URLs
 		interval := time.Duration(0)
 		if total > 1 {
 			interval = *ramp / time.Duration(total)
 		}
 		started := make([]int, len(urls))
-		for n := 0; n < total && ctx.Err() == nil; {
+		n := 0
+		for n < total && ctx.Err() == nil {
 			for i := range urls {
 				if started[i] < counts[i] {
 					started[i]++
 					n++
-					wg.Add(1)
 					go func(i int) { defer wg.Done(); listen(ctx, urls[i], per[i]) }(i)
 					sleep(ctx, interval)
 				}
 			}
+		}
+		for ; n < total; n++ {
+			wg.Done()
 		}
 	}()
 

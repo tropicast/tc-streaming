@@ -37,7 +37,8 @@ is on.
 
 The deploy uses the Icecast, Caddy and playout images of the last `main`
 commits that changed their files (`ghcr.io/tropicast/icecast`,
-`ghcr.io/tropicast/caddy`, `ghcr.io/tropicast/playout`). A deploy that does
+`ghcr.io/tropicast/caddy`, `ghcr.io/tropicast/playout`; from GitLab, its
+registry: see [GitLab CI](#gitlab-ci)). A deploy that does
 not touch them keeps them running. The bundle's `release.env` records the
 tags.
 Deploy Icecast changes in a quiet hour.
@@ -418,3 +419,47 @@ Docker restarts both services after the reboot (`restart: unless-stopped`).
 1. Set the new value: `openssl rand -hex 24 | gh secret set <NAME>`.
 2. For `ICECAST_SOURCE_AUTH_PASSWORD`, update the API at the same time.
 3. Run the Deploy workflow. Icecast restarts, so do it in a quiet hour.
+
+## GitLab CI
+
+`.gitlab-ci.yml` runs the same jobs as `.github/workflows` on
+`gitlab.tropicastradio.com` (#117). Both run until the move
+(tropicast/tc-devops#7), when the GitHub workflows go. The file's header maps
+each workflow to its jobs. Differences:
+
+- **Images** go to the GitLab registry:
+  `registry.tropicastradio.com/tropicast/tc-streaming/icecast`, `/caddy` and
+  `/playout`, with the same `sha-<commit>` and version tags. They are built for
+  the x86 node on the arm64 runner: Caddy cross-compiles, Icecast and playout
+  build under QEMU (tc-devops#27), so an Icecast image change takes several
+  minutes longer than on GitHub. The bundle's `release.env` names the registry
+  (`STREAMING_REGISTRY`); older bundles mean GHCR.
+- **The first deploy from GitLab restarts Icecast, Caddy and playout**: the
+  image names change even when the tags don't. Deploy it in a quiet hour.
+- **Deploy** is the manual `deploy` job of a pipeline on main (that commit) or
+  of a release tag. Roll back by running an older pipeline's `deploy` job again.
+- **Terraform**: run `terraform:plan`, read the plan in its log, then run
+  `terraform:apply` of the same pipeline.
+- **Releases** are GitLab Releases, created directly: GitLab has no drafts.
+  Pre-releases say so in their name.
+
+### Set up (once, by you)
+
+1. **Variables** (*Settings > CI/CD > Variables*): the names of the GitHub
+   repository's variables and secrets (*First-time setup*), each **Protected**,
+   with environment scope `production`. Mark the secrets **Masked and hidden**,
+   except the multi-line ones (`DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `TFVARS`,
+   `STATION_LIMITS`), which GitLab can't mask. Values of the GitHub variables:
+   `gh variable list --json name,value`; secret values come from your password
+   manager.
+2. **Environment** `production` (*Operate > Environments*). GitLab CE has no
+   protected environments: what guards production is that its variables are
+   Protected (only `main` and protected tags get them) and that only
+   Maintainers push or merge to `main`.
+3. **Protected tags** (*Settings > Repository*): `v*`, Maintainers create.
+4. **Images of the current main**: *Build > Pipelines > Run pipeline* on main.
+   It builds and pushes the three images under the tags a deploy of main looks
+   for.
+5. **Registry access from the node**: while the DevOps node is locked down
+   (tc-devops `lockdown = true`), add the streaming node's IPv4 to tc-devops
+   `admin_cidrs`, or its image pull fails.
