@@ -81,7 +81,9 @@ variables:
         target=$CI_REGISTRY_IMAGE/$IMAGE_NAME:sha-$source_sha
         printf '%s' "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
         docker tag "$tag-prod" "$target"
-        docker push -q "$target"
+        # One platform's manifest, no index: Docker 29 pushes the index before
+        # its image manifest, and the GitLab registry refuses it ("blob unknown").
+        docker push -q --platform "$IMAGE_PLATFORM" "$target"
         docker rmi "$target" >/dev/null
         docker logout "$CI_REGISTRY" >/dev/null
       fi
