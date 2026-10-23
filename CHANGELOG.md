@@ -20,6 +20,7 @@ auto-generated list of merged pull requests. See [Releasing](docs/runbook.md#rel
 ### Fixed
 
 - The load generator (`tools/loadtest`) no longer races its own shutdown: listeners are counted before the ramp starts, so `wg.Wait` never runs while the ramp adds one (found by the GitLab SAST job).
+- GitLab pipeline on main: images are pushed as one platform's manifest, which the GitLab registry accepts (Docker 29 pushed an index it refused with "blob unknown"); `black`, which ansible-lint installs, is pinned to 26.10.1 (GHSA-cg8m-r9f2-5wm2); and the full-history secret scan accepts the local-development password of an old README example (`.gitleaksignore`).
 - Security scan findings accepted with a reason: Icecast's entrypoint parses the config it rendered itself (`nosemgrep` on the XML parse), and Caddy still runs as root (`.trivyignore`; #119 changes that). The entrypoint change is a comment, but it changes the Icecast image: the next deploy restarts Icecast.
 
 ## [0.2.0] - 2026-10-21

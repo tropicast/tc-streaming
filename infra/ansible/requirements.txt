@@ -3,3 +3,5 @@
 # ansible-lint checks against; the playbook uses only ansible.builtin modules.
 ansible-lint==26.10.1
 ansible-core==2.21.5
+# ansible-lint's formatter, pinned to a release with GHSA-cg8m-r9f2-5wm2 fixed.
+black==26.10.1

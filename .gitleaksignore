@@ -1,0 +1,5 @@
+# Findings reviewed and accepted (gitleaks fingerprints: commit:file:rule:line).
+
+# The local-development source password of .env.example in a curl example
+# (README, removed since); not a production credential.
+01e03234b20b078a4f82bb43bc39bd29d5440d16:README.md:curl-auth-user:99
