@@ -13,11 +13,13 @@ bin=$work/bin
 mkdir -p "$root" "$bin"
 printf 'X=1\n' > "$root/.env"
 
-# Fake docker: start times in $root/started.<service>; "compose up" bumps the
-# services listed in $RECREATE; every call is logged.
+# Fake docker: start times in $root/started.<service>, from a counter (BusyBox
+# date has no nanoseconds, and steps often run within one second); "compose
+# up" bumps the services listed in $RECREATE; every call is logged.
 cat > "$bin/docker" <<'SH'
 #!/usr/bin/env bash
 state=${FAKE_STATE:?}
+tick() { echo $(( $(cat "$state/clock" 2>/dev/null || echo 0) + 1 )) | tee "$state/clock"; }
 echo "$*" >> "$state/calls"
 if [[ $1 == compose ]]; then
     shift
@@ -25,7 +27,7 @@ if [[ $1 == compose ]]; then
     case $1 in
         ps) [[ -f $state/started.${3:-} ]] && echo "id-$3" ;;
         config) [[ ${2:-} == --services ]] && printf 'icecast\ncaddy\nicecast-exporter\nalloy\n' ;;
-        up) for s in ${RECREATE:-}; do date +%s%N > "$state/started.$s"; done ;;
+        up) for s in ${RECREATE:-}; do tick > "$state/started.$s"; done ;;
         exec) [[ $* == *"grep -q reload-stations"* ]] && exit 1 ;;
     esac
     exit 0
@@ -71,7 +73,8 @@ check() {
     fi
 }
 
-for s in icecast caddy icecast-exporter alloy; do date +%s%N > "$root/started.$s"; done
+echo 0 > "$root/clock"
+for s in icecast caddy icecast-exporter alloy; do echo 0 > "$root/started.$s"; done
 mkdir -p "$root/exporter" "$root/alloy"
 
 deploy 1 v1 v1
