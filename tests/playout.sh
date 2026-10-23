@@ -209,7 +209,10 @@ check "station 42 was never restarted" 1 "$(playout_logs | grep -c 'station 42: 
 
 # The control plane goes away: stations keep playing.
 compose stop playout-stub >/dev/null 2>&1
-sleep 6
+# The first failed poll can take up to the request timeout on a busy runner;
+# then a few more polls must not log it again.
+for _ in $(seq 1 20); do [[ $(logged playout 'cannot read the desired state') == yes ]] && break; sleep 1; done
+sleep 6 # three polls (PLAYOUT_POLL_SECONDS=2)
 check "endpoint down: the failure is logged once" 1 \
     "$(playout_logs | grep -c 'cannot read the desired state, keeping 3 stations' || true)"
 check "endpoint down: station 42 keeps playing" yes "$(mounted /stations/42/autodj.mp3)"
